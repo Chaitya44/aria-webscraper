@@ -13,6 +13,8 @@ import {
     loadHistory as firestoreLoad,
     deleteHistoryEntry as firestoreDelete,
     clearHistory as firestoreClear,
+    getDailyScrapeCount as getDbDailyCount,
+    incrementDailyScrapeCount as incDbDailyCount
 } from "@/lib/history";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -43,24 +45,7 @@ const MAX_HISTORY = 5;
 const DAILY_LIMIT = 10;
 const SCRAPE_COUNT_PREFIX = "aria_scrapes_";
 
-// ── Daily Scrape Limit Helpers ───────────────────────────────────────────────
-function getTodayKey(): string {
-    return SCRAPE_COUNT_PREFIX + new Date().toISOString().slice(0, 10);
-}
-
-function getDailyScrapeCount(): number {
-    try {
-        return parseInt(localStorage.getItem(getTodayKey()) || "0", 10);
-    } catch {
-        return 0;
-    }
-}
-
-function incrementDailyScrapeCount(): void {
-    const key = getTodayKey();
-    const current = getDailyScrapeCount();
-    localStorage.setItem(key, String(current + 1));
-}
+// Daily limits are now securely tracked in Firebase via lib/history
 
 // ── Feature SVG Illustrations ────────────────────────────────────────────────
 function UniversalIllustration() {
@@ -223,7 +208,15 @@ export default function NexusDashboard() {
         }
 
         // ── Daily Scrape Limit ────────────────────────────────────
-        const todayCount = getDailyScrapeCount();
+        let todayCount = 0;
+        if (user) {
+            todayCount = await getDbDailyCount(user.uid);
+        } else {
+            // Local fallback logic for users that bypassed login
+            const key = SCRAPE_COUNT_PREFIX + new Date().toISOString().slice(0, 10);
+            todayCount = parseInt(localStorage.getItem(key) || "0", 10);
+        }
+
         if (todayCount >= DAILY_LIMIT) {
             setError(`Daily limit reached (${DAILY_LIMIT}/${DAILY_LIMIT}). You can perform up to ${DAILY_LIMIT} extractions per day. Please try again tomorrow.`);
             return;
@@ -315,7 +308,13 @@ export default function NexusDashboard() {
             }
 
             // Increment daily scrape counter
-            incrementDailyScrapeCount();
+            if (user) {
+                await incDbDailyCount(user.uid);
+            } else {
+                const key = SCRAPE_COUNT_PREFIX + new Date().toISOString().slice(0, 10);
+                const current = parseInt(localStorage.getItem(key) || "0", 10);
+                localStorage.setItem(key, String(current + 1));
+            }
 
             addLog(`Done — ${tableCount} tables, ${sd.media?.length || 0} media, ${sd.external_links?.length || 0} links`);
         } catch (e: any) {
