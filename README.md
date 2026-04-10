@@ -51,10 +51,9 @@ python -m venv venv
 # Windows: .\venv\Scripts\Activate.ps1
 # macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
-python -m playwright install chromium
 
-# Create .env with your extraction API key (optional)
-echo "EXTRACTOR_API_KEY=your-key" > .env
+# Create .env with your Firecrawl API key
+echo "FIRECRAWL_API_KEY=your-key" > .env
 
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -83,7 +82,7 @@ Visit `http://localhost:3000` → Sign in → Enter your Gemini API key → Star
 ### Backend (`backend/.env`)
 | Variable | Description |
 |----------|-------------|
-| `EXTRACTOR_API_KEY` | Web extraction engine API key (optional) |
+| `FIRECRAWL_API_KEY` | Firecrawl API key for lightweight page extraction |
 
 ### Frontend (`frontend/nexus-scraper-ui/.env.local`)
 | Variable | Description |
