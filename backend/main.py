@@ -94,10 +94,10 @@ async def fetch_markdown_via_extractor(url: str) -> str:
     payload = {
         "url": url,
         "formats": ["markdown"],
-        "timeout": 60000,
+        "timeout": 180000,
     }
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
+    async with httpx.AsyncClient(timeout=240.0) as client:
         try:
             resp = await client.post(EXTRACTOR_SCRAPE_URL, json=payload, headers=headers)
             resp.raise_for_status()

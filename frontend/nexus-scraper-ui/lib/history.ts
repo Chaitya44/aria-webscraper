@@ -32,9 +32,10 @@ export async function saveHistory(uid: string, entry: Omit<HistoryEntry, "id">) 
     }
     const colRef = collection(db, COLLECTION_PATH(uid));
 
-    // Add the new entry
+    // Add the new entry, stringifying 'data' to bypass Firestore nested array limits
     await addDoc(colRef, {
         ...entry,
+        data: JSON.stringify(entry.data),
         createdAt: serverTimestamp(),
     });
 
@@ -74,14 +75,21 @@ export async function loadHistory(uid: string): Promise<HistoryEntry[]> {
     });
 
     return sorted.slice(0, MAX_HISTORY).map((d) => {
-        const data = d.data();
+        const docData = d.data();
+        let parsedData = {};
+        try {
+            parsedData = typeof docData.data === "string" ? JSON.parse(docData.data) : (docData.data || {});
+        } catch (e) {
+            parsedData = docData.data || {};
+        }
+
         return {
             id: d.id,
-            url: data.url,
-            timestamp: data.timestamp,
-            data: data.data,
-            schema: data.schema,
-            itemCount: data.itemCount,
+            url: docData.url,
+            timestamp: docData.timestamp,
+            data: parsedData as any,
+            schema: docData.schema,
+            itemCount: docData.itemCount,
         };
     });
 }
