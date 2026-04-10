@@ -220,17 +220,22 @@ export default function NexusDashboard() {
 
         // ── Daily Scrape Limit ────────────────────────────────────
         let currentCount = 0;
-        if (user) {
-            currentCount = await getDbDailyCount(user.uid);
-            setTodayCount(currentCount); // ensure UI is synced
-        } else {
-            const key = SCRAPE_COUNT_PREFIX + new Date().toISOString().slice(0, 10);
-            currentCount = parseInt(localStorage.getItem(key) || "0", 10);
-            setTodayCount(currentCount);
+        try {
+            if (user) {
+                currentCount = await getDbDailyCount(user.uid);
+                setTodayCount(currentCount);
+            } else {
+                const key = SCRAPE_COUNT_PREFIX + new Date().toISOString().slice(0, 10);
+                currentCount = parseInt(localStorage.getItem(key) || "0", 10);
+                setTodayCount(currentCount);
+            }
+        } catch {
+            // If Firebase check fails, don't block the user — just proceed
+            currentCount = 0;
         }
 
         if (currentCount >= DAILY_LIMIT) {
-            setError(`Daily limit reached (${DAILY_LIMIT}/${DAILY_LIMIT}). You can perform up to ${DAILY_LIMIT} extractions per day. Please try again tomorrow.`);
+            setError(`Daily limit reached (${DAILY_LIMIT}/${DAILY_LIMIT}). Resets tomorrow.`);
             return;
         }
 
