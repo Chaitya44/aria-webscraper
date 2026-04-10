@@ -12,8 +12,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -247,22 +246,21 @@ Rules:
 
 def _call_gemini_sync(markdown: str, user_key: str):
     """Synchronous Gemini call — run this in a thread executor."""
-    client = genai.Client(api_key=user_key)
+    genai.configure(api_key=user_key)
+    model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            temperature=0.1,
+        ),
+    )
 
     max_chars = 80_000
     if len(markdown) > max_chars:
         markdown = markdown[:max_chars] + "\n\n[Content truncated for processing]"
 
     prompt = f"{GEMINI_SYSTEM_PROMPT}\n\nHere is the Markdown content to analyze:\n\n{markdown}"
-
-    response = client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.1,
-        ),
-    )
+    response = model.generate_content(prompt)
     return response.text
 
 
