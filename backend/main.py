@@ -92,6 +92,37 @@ def _is_amazon_url(url: str) -> bool:
         return False
 
 
+# ──────────────────────────── Jina AI Fallback ────────────────────
+
+async def fetch_markdown_via_jina(url: str) -> str:
+    """Free fallback using Jina AI Reader (r.jina.ai).
+    No API key required. Different IP pool — bypasses sites that block Firecrawl."""
+    jina_url = f"https://r.jina.ai/{url}"
+    headers = {
+        "Accept": "text/markdown",
+        "X-Return-Format": "markdown",
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.get(jina_url, headers=headers, follow_redirects=True)
+            resp.raise_for_status()
+            text = resp.text.strip()
+            if text and len(text) > 100:
+                logger.info(f"Jina fallback succeeded: {len(text)} chars")
+                return text
+            raise HTTPException(status_code=422, detail="Jina AI could not extract content from this page.")
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Both Firecrawl and Jina AI failed to load this page. The site may be completely blocking external access.",
+            )
+        except httpx.RequestError:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to reach Jina AI fallback service.",
+            )
+
+
 # ──────────────────────────── Extraction Step ─────────────────────
 
 async def fetch_markdown_via_firecrawl(url: str) -> str:
@@ -153,21 +184,19 @@ async def fetch_markdown_via_firecrawl(url: str) -> str:
                     status_code=502,
                     detail="Firecrawl API quota exceeded. Please try again later.",
                 )
-            elif status == 408:
-                raise HTTPException(
-                    status_code=408,
-                    detail="The page took too long to load. This website may be too slow or blocking scrapers. Try a different URL.",
-                )
+            elif status in (408, 500):
+                # Firecrawl couldn't load this site — try Jina AI for free
+                logger.warning(f"Firecrawl returned {status} — falling back to Jina AI Reader")
+                return await fetch_markdown_via_jina(url)
             else:
                 raise HTTPException(
                     status_code=status,
                     detail=f"Firecrawl error {status}: {error_body.get('error', e.response.text[:300])}",
                 )
         except httpx.TimeoutException:
-            raise HTTPException(
-                status_code=408,
-                detail="Request to Firecrawl timed out. The page may be too heavy to scrape.",
-            )
+            # Firecrawl timed out — try Jina AI for free
+            logger.warning("Firecrawl timed out — falling back to Jina AI Reader")
+            return await fetch_markdown_via_jina(url)
         except httpx.RequestError as exc:
             raise HTTPException(
                 status_code=502,
