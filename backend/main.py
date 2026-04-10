@@ -130,7 +130,7 @@ async def fetch_markdown_via_jina(url: str) -> str:
 
 async def fetch_markdown_via_firecrawl(url: str) -> str:
     """Call Firecrawl to get clean Markdown from any URL.
-    Uses browser actions for Amazon and JS-heavy sites."""
+    Optimized payload with JS wait, mobile fallback for Amazon, Jina fallback on failure."""
 
     if not FIRECRAWL_API_KEY:
         raise HTTPException(
@@ -143,24 +143,31 @@ async def fetch_markdown_via_firecrawl(url: str) -> str:
         "Authorization": f"Bearer {FIRECRAWL_API_KEY}",
     }
 
-    # Base payload
+    is_amazon = _is_amazon_url(url)
+
+    # Optimized base payload
     payload: dict = {
         "url": url,
         "formats": ["markdown"],
-        "timeout": 120000,
-        "waitFor": 3000,          # wait 3s for JS to render
+        "onlyMainContent": False,       # get everything, Gemini will structure it
+        "removeBase64Images": True,      # keep payload small
+        "skipTlsVerification": True,     # handle govt sites with SSL issues
+        "timeout": 60000,
+        "waitFor": 2000,
     }
 
-    # Amazon-specific: use stealth browser actions to bypass bot protection
-    if _is_amazon_url(url):
+    if is_amazon:
+        # Mobile Amazon is lighter and less bot-protected
+        payload["mobile"] = True
+        payload["waitFor"] = 4000
+        payload["timeout"] = 90000
         payload["actions"] = [
             {"type": "wait", "milliseconds": 3000},
-            {"type": "scroll", "direction": "down", "amount": 500},
-            {"type": "wait", "milliseconds": 2000},
+            {"type": "scroll", "direction": "down", "amount": 800},
+            {"type": "wait", "milliseconds": 1500},
         ]
-        payload["timeout"] = 180000  # 3 min for Amazon
 
-    async with httpx.AsyncClient(timeout=200.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             resp = await client.post(FIRECRAWL_SCRAPE_URL, json=payload, headers=headers)
             resp.raise_for_status()
@@ -185,10 +192,9 @@ async def fetch_markdown_via_firecrawl(url: str) -> str:
             elif status == 402:
                 raise HTTPException(
                     status_code=502,
-                    detail="Firecrawl API quota exceeded. Please try again later.",
+                    detail="Firecrawl API quota exceeded. Please check your Firecrawl plan.",
                 )
-            elif status in (408, 500):
-                # Firecrawl couldn't load this site — try Jina AI for free
+            elif status in (408, 500, 502, 503):
                 logger.warning(f"Firecrawl returned {status} — falling back to Jina AI Reader")
                 return await fetch_markdown_via_jina(url)
             else:
@@ -197,7 +203,6 @@ async def fetch_markdown_via_firecrawl(url: str) -> str:
                     detail=f"Firecrawl error {status}: {error_body.get('error', e.response.text[:300])}",
                 )
         except httpx.TimeoutException:
-            # Firecrawl timed out — try Jina AI for free
             logger.warning("Firecrawl timed out — falling back to Jina AI Reader")
             return await fetch_markdown_via_jina(url)
         except httpx.RequestError as exc:
@@ -209,11 +214,10 @@ async def fetch_markdown_via_firecrawl(url: str) -> str:
     data = resp.json()
 
     if not data.get("success"):
-        error_msg = data.get("error", "Unknown error from Firecrawl.")
-        raise HTTPException(
-            status_code=422,
-            detail=f"Firecrawl could not scrape this page: {error_msg}",
-        )
+        error_msg = data.get("error", "")
+        # If Firecrawl marked it as failure, try Jina before giving up
+        logger.warning(f"Firecrawl success=false: {error_msg} — trying Jina fallback")
+        return await fetch_markdown_via_jina(url)
 
     markdown = data.get("data", {}).get("markdown", "")
     if not markdown:
