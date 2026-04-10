@@ -150,14 +150,15 @@ export default function NexusDashboard() {
         const loadData = async () => {
             try {
                 const savedKey = localStorage.getItem("aria_gemini_key");
-                if (savedKey) setGeminiKey(savedKey);
+                // Set key BEFORE keyLoaded so the modal doesn't flash open
+                if (savedKey) {
+                    setGeminiKey(savedKey);
+                }
 
                 if (user) {
-                    // Logged in → load from Firestore
                     const entries = await firestoreLoad(user.uid);
                     const count = await getDbDailyCount(user.uid);
                     setTodayCount(count);
-                    
                     setHistory(entries.map(e => ({
                         id: e.id || Date.now().toString(),
                         url: e.url,
@@ -169,13 +170,17 @@ export default function NexusDashboard() {
                             : { url: e.url, structured_data: { page_summary: "", media: [], external_links: [], data_tables: [] }, raw_markdown: "" },
                     })));
                 } else {
-                    // Not logged in → load from localStorage
                     const saved = localStorage.getItem(HISTORY_KEY);
                     if (saved) setHistory(JSON.parse(saved));
                     const localKey = SCRAPE_COUNT_PREFIX + new Date().toISOString().slice(0, 10);
                     setTodayCount(parseInt(localStorage.getItem(localKey) || "0", 10));
                 }
-            } catch (err) { console.error('[History] Failed to load:', err); } finally { setKeyLoaded(true); }
+            } catch (err) {
+                console.error('[History] Failed to load:', err);
+            } finally {
+                // Only mark loaded AFTER state is fully set
+                setKeyLoaded(true);
+            }
         };
         loadData();
     }, [user]);
