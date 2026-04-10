@@ -99,8 +99,12 @@ async def fetch_markdown_via_jina(url: str) -> str:
     No API key required. Different IP pool — bypasses sites that block Firecrawl."""
     jina_url = f"https://r.jina.ai/{url}"
     headers = {
-        "Accept": "text/markdown",
+        "Accept": "text/markdown, text/plain, */*",
         "X-Return-Format": "markdown",
+        "X-Timeout": "30",
+        # Real browser UA so Jina's renderer also isn't blocked
+        "X-With-Generated-Alt": "true",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
@@ -323,31 +327,76 @@ async def structure_with_gemini(markdown: str, user_key: str) -> dict | None:
 # ──────────────────────────── Fallback Parser ─────────────────────
 
 def fallback_structure_from_markdown(markdown: str) -> dict:
-    """Extract basic structured data from raw Markdown without any AI.
-    Used as a fallback when Gemini is unavailable."""
+    """Extract structured data from raw Markdown without AI.
+    Product/e-commerce aware: extracts title, price, rating, features, specs."""
 
+    # ── Images ──────────────────────────────────────────────────────
     image_pattern = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
     media = [
         {"url": m.group(2), "type": "image", "alt": m.group(1) or None}
         for m in image_pattern.finditer(markdown)
-    ]
+        if not m.group(2).endswith(('.svg', '.ico'))
+    ][:20]  # cap at 20 images
 
-    link_pattern = re.compile(r'(?<!!)\\[[^\]]*\\]\((https?://[^)]+)\)')
-    raw_url_pattern = re.compile(r'(?<!\()\\bhttps?://[^\s)>\]"]+', re.IGNORECASE)
-    link_urls = set(link_pattern.findall(markdown))
+    # ── Links ───────────────────────────────────────────────────────
+    link_pattern = re.compile(r'(?<!!)\[([^\]]*)\]\((https?://[^)]+)\)')
+    raw_url_pattern = re.compile(r'(?<!\()\bhttps?://[^\s)>\]"]+', re.IGNORECASE)
+    link_urls = set(m.group(2) for m in link_pattern.finditer(markdown))
     raw_urls = set(raw_url_pattern.findall(markdown))
     image_urls = {m["url"] for m in media}
-    external_links = sorted((link_urls | raw_urls) - image_urls)
+    external_links = sorted((link_urls | raw_urls) - image_urls)[:80]
 
+    # ── Headings ────────────────────────────────────────────────────
     heading_pattern = re.compile(r'^#{1,3}\s+(.+)$', re.MULTILINE)
     headings = heading_pattern.findall(markdown)
 
-    if headings:
-        page_summary = f"Page contains {len(headings)} sections: {', '.join(headings[:5])}{'...' if len(headings) > 5 else ''}. (Auto-parsed — Gemini unavailable.)"
-    else:
-        page_summary = "Page content was extracted successfully. (Auto-parsed — Gemini unavailable.)"
-
+    # ── Product-specific extraction ─────────────────────────────────
     data_tables = []
+
+    # Price pattern: ₹, $, €, USD, INR followed by digits
+    price_pattern = re.compile(r'[\u20b9$€£]\s?[\d,]+(?:\.\d{1,2})?|\b(?:INR|USD|EUR|GBP)\s?[\d,]+(?:\.\d{1,2})?', re.IGNORECASE)
+    prices = list(dict.fromkeys(price_pattern.findall(markdown)))[:10]
+
+    # Rating pattern: 4.5 out of 5, 4.5/5, 4.5 stars
+    rating_pattern = re.compile(r'([\d.]+)\s*(?:out of 5|/5|stars?|\u2605)', re.IGNORECASE)
+    ratings = rating_pattern.findall(markdown)
+
+    # Review count: (1,234 ratings), 1,234 reviews
+    review_pattern = re.compile(r'([\d,]+)\s*(?:ratings?|reviews?|customer reviews?)', re.IGNORECASE)
+    reviews = review_pattern.findall(markdown)
+
+    # Product title: usually the first H1 or large heading
+    title = headings[0] if headings else ""
+
+    # Build product info table if we found product signals
+    if prices or ratings:
+        product_rows = []
+        if title:
+            product_rows.append(["Product Title", title])
+        if prices:
+            product_rows.append(["Price", " / ".join(prices[:3])])
+        if ratings:
+            product_rows.append(["Rating", f"{ratings[0]} / 5 stars"])
+        if reviews:
+            product_rows.append(["Total Reviews", reviews[0]])
+        if product_rows:
+            data_tables.append({
+                "title": "Product Overview",
+                "headers": ["Field", "Value"],
+                "rows": product_rows,
+            })
+
+    # Bullet feature lists (common on Amazon: • Feature, - Feature)
+    bullet_pattern = re.compile(r'^[\-\*•]\s+(.{10,120})$', re.MULTILINE)
+    bullets = bullet_pattern.findall(markdown)
+    if bullets:
+        data_tables.append({
+            "title": "Product Features",
+            "headers": ["Feature"],
+            "rows": [[b.strip()] for b in bullets[:20]],
+        })
+
+    # Markdown tables (specs, comparison tables)
     table_pattern = re.compile(r'(\|.+\|\n\|[\s:|-]+\|\n(?:\|.+\|\n?)+)', re.MULTILINE)
     for match in table_pattern.finditer(markdown):
         lines = match.group(0).strip().split('\n')
@@ -359,19 +408,28 @@ def fallback_structure_from_markdown(markdown: str) -> dict:
                 if cells:
                     rows.append(cells)
             if headers and rows:
-                data_tables.append({"title": "Extracted Table", "headers": headers, "rows": rows})
+                data_tables.append({"title": "Specifications", "headers": headers, "rows": rows})
 
+    # Last resort: build sections table from headings
     if not data_tables and headings:
         data_tables.append({
             "title": "Page Sections",
             "headers": ["Section"],
-            "rows": [[h] for h in headings],
+            "rows": [[h] for h in headings[:20]],
         })
+
+    # ── Summary ─────────────────────────────────────────────────────
+    if title and prices:
+        page_summary = f"{title}. Price: {', '.join(prices[:2])}. {'Rating: ' + ratings[0] + '/5. ' if ratings else ''}(Auto-parsed — Gemini unavailable.)"
+    elif headings:
+        page_summary = f"Page: {headings[0]}. Contains {len(headings)} sections, {len(media)} images, {len(external_links)} links. (Auto-parsed — Gemini unavailable.)"
+    else:
+        page_summary = "Page content extracted successfully. (Auto-parsed — Gemini unavailable.)"
 
     return {
         "page_summary": page_summary,
         "media": media,
-        "external_links": external_links[:100],
+        "external_links": external_links,
         "data_tables": data_tables,
     }
 
