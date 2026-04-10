@@ -252,7 +252,7 @@ def _call_gemini_sync(markdown: str, user_key: str):
     prompt = f"{GEMINI_SYSTEM_PROMPT}\n\nHere is the Markdown content to analyze:\n\n{markdown}"
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-1.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
