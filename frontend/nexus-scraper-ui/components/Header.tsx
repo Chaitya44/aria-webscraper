@@ -56,7 +56,7 @@ export default function Header() {
     const isDark = theme === "dark";
 
     return (
-        <header className={`sticky top-0 z-[100] w-full header-bar transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''}`}>
+        <header className={`sticky top-0 z-[9999] w-full header-bar transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''}`}>
             <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
                 {/* Left — Logo */}
                 <Link href="/" className="flex items-center space-x-2.5 group">
@@ -138,7 +138,7 @@ export default function Header() {
                                         animate={{ opacity: 1, y: 0, scale: 1 }}
                                         exit={{ opacity: 0, y: -8, scale: 0.95 }}
                                         transition={{ duration: 0.15 }}
-                                        className="absolute right-0 top-12 w-64 glass-card rounded-2xl border border-white/[0.08] p-2 shadow-2xl z-[200] dropdown-card"
+                                        className="absolute right-0 top-full mt-2 w-64 glass-card rounded-2xl border border-white/[0.08] p-2 shadow-2xl z-[9999] dropdown-card"
                                     >
                                         {/* User info header */}
                                         <div className="flex items-center space-x-3 px-3 py-3 rounded-xl bg-white/[0.03]">

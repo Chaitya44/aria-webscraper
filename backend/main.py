@@ -152,19 +152,21 @@ async def fetch_markdown_via_firecrawl(url: str) -> str:
         "onlyMainContent": False,       # get everything, Gemini will structure it
         "removeBase64Images": True,      # keep payload small
         "skipTlsVerification": True,     # handle govt sites with SSL issues
-        "timeout": 60000,
-        "waitFor": 2000,
+        "timeout": 90000,
+        "waitFor": 5000,                 # wait 5s for JS-heavy pages to fully render
     }
 
     if is_amazon:
         # Mobile Amazon is lighter and less bot-protected
         payload["mobile"] = True
-        payload["waitFor"] = 4000
-        payload["timeout"] = 90000
+        payload["waitFor"] = 6000
+        payload["timeout"] = 120000
         payload["actions"] = [
-            {"type": "wait", "milliseconds": 3000},
-            {"type": "scroll", "direction": "down", "amount": 800},
-            {"type": "wait", "milliseconds": 1500},
+            {"type": "wait", "milliseconds": 4000},
+            {"type": "scroll", "direction": "down", "amount": 1200},
+            {"type": "wait", "milliseconds": 2000},
+            {"type": "scroll", "direction": "down", "amount": 1200},
+            {"type": "wait", "milliseconds": 1000},
         ]
 
     async with httpx.AsyncClient(timeout=120.0) as client:
