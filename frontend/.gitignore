@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Next.js
+nexus-scraper-ui/node_modules/
+nexus-scraper-ui/.next/
+nexus-scraper-ui/out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Gemini
+.gemini/
+
+# Test files
+test*.py
+node_modules
