@@ -137,6 +137,7 @@ export default function NexusDashboard() {
     const [error, setError] = useState<string | null>(null);
     const [logs, setLogs] = useState<string[]>([]);
     const [elapsed, setElapsed] = useState(0);
+    const [todayCount, setTodayCount] = useState(0);
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     const [geminiKey, setGeminiKey] = useState("");
     const [keyLoaded, setKeyLoaded] = useState(false);
@@ -154,6 +155,9 @@ export default function NexusDashboard() {
                 if (user) {
                     // Logged in → load from Firestore
                     const entries = await firestoreLoad(user.uid);
+                    const count = await getDbDailyCount(user.uid);
+                    setTodayCount(count);
+                    
                     setHistory(entries.map(e => ({
                         id: e.id || Date.now().toString(),
                         url: e.url,
@@ -168,6 +172,8 @@ export default function NexusDashboard() {
                     // Not logged in → load from localStorage
                     const saved = localStorage.getItem(HISTORY_KEY);
                     if (saved) setHistory(JSON.parse(saved));
+                    const localKey = SCRAPE_COUNT_PREFIX + new Date().toISOString().slice(0, 10);
+                    setTodayCount(parseInt(localStorage.getItem(localKey) || "0", 10));
                 }
             } catch (err) { console.error('[History] Failed to load:', err); } finally { setKeyLoaded(true); }
         };
@@ -208,16 +214,17 @@ export default function NexusDashboard() {
         }
 
         // ── Daily Scrape Limit ────────────────────────────────────
-        let todayCount = 0;
+        let currentCount = 0;
         if (user) {
-            todayCount = await getDbDailyCount(user.uid);
+            currentCount = await getDbDailyCount(user.uid);
+            setTodayCount(currentCount); // ensure UI is synced
         } else {
-            // Local fallback logic for users that bypassed login
             const key = SCRAPE_COUNT_PREFIX + new Date().toISOString().slice(0, 10);
-            todayCount = parseInt(localStorage.getItem(key) || "0", 10);
+            currentCount = parseInt(localStorage.getItem(key) || "0", 10);
+            setTodayCount(currentCount);
         }
 
-        if (todayCount >= DAILY_LIMIT) {
+        if (currentCount >= DAILY_LIMIT) {
             setError(`Daily limit reached (${DAILY_LIMIT}/${DAILY_LIMIT}). You can perform up to ${DAILY_LIMIT} extractions per day. Please try again tomorrow.`);
             return;
         }
@@ -310,10 +317,12 @@ export default function NexusDashboard() {
             // Increment daily scrape counter
             if (user) {
                 await incDbDailyCount(user.uid);
+                setTodayCount(prev => prev + 1);
             } else {
                 const key = SCRAPE_COUNT_PREFIX + new Date().toISOString().slice(0, 10);
                 const current = parseInt(localStorage.getItem(key) || "0", 10);
                 localStorage.setItem(key, String(current + 1));
+                setTodayCount(current + 1);
             }
 
             addLog(`Done — ${tableCount} tables, ${sd.media?.length || 0} media, ${sd.external_links?.length || 0} links`);
@@ -684,7 +693,7 @@ export default function NexusDashboard() {
                                         <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
                                         <span className="ml-3 text-[10px] text-gray-600 font-mono">aria_agent</span>
                                     </div>
-                                    <span className="text-[9px] text-gray-700 font-mono">{getDailyScrapeCount()}/{DAILY_LIMIT} extractions today</span>
+                                    <span className="text-[9px] text-gray-700 font-mono">{todayCount}/{DAILY_LIMIT} extractions today</span>
                                 </div>
                                 <div className="p-4 h-40 font-mono text-xs text-gray-500 overflow-y-auto">
                                     {logs.length === 0 && !loading && (
