@@ -142,11 +142,22 @@ class ScrapeResponse(BaseModel):
     raw_markdown: str
 
 
+class SearchResultItem(BaseModel):
+    title: str
+    description: str
+    price: str | None = None
+    image_url: str | None = None
+    source_url: str
+
+class SearchStructuredResponse(BaseModel):
+    search_summary: str
+    results: list[SearchResultItem]
+
 class SearchResponse(BaseModel):
     query: str
     sources: list[str] = []
     page_type: str = "GENERAL"
-    structured_data: StructuredResult
+    structured_data: SearchStructuredResponse
     combined_markdown: str
 
 
@@ -490,13 +501,13 @@ async def classify_page(markdown: str, user_key: str) -> str:
         return "GENERAL"
 
 
-# ──────────────────────────── Pass 2: Extractor ────────────────────
+SEARCH_SYSTEM_PROMPT = """You are an AI research assistant analyzing web search results. You MUST extract a structured list of the top items, products, or articles mentioned in the text. For every item, extract its title, a short description, the price (if applicable), the image URL, and the link to the item. Do not just summarize the page; you must populate the results array."""
 
-def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL") -> str:
+def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False) -> str:
     """
     Main extraction call — runs in a thread executor.
     Uses genai.Client (instance-scoped, thread-safe, no global configure() race).
-    Injects a 20-item cap instruction for DIRECTORY_OR_LIST pages.
+    Injects a 20-item cap instruction for DIRECTORY_OR_LIST pages unless in search mode.
     """
     client = genai.Client(api_key=user_key)
 
@@ -505,15 +516,20 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL") 
 
     logger.info(f"[{page_type}] Sending {len(truncated)} chars to Gemini (from {len(markdown)} raw)")
 
-    extra = _DIRECTORY_CAP if page_type == "DIRECTORY_OR_LIST" else ""
-    prompt = f"{GEMINI_SYSTEM_PROMPT}{extra}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
+    if is_search:
+        prompt = f"{SEARCH_SYSTEM_PROMPT}\n\nExtract ALL data from these search results:\n\n{truncated}"
+        schema = SearchStructuredResponse
+    else:
+        extra = _DIRECTORY_CAP if page_type == "DIRECTORY_OR_LIST" else ""
+        prompt = f"{GEMINI_SYSTEM_PROMPT}{extra}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
+        schema = StructuredResult
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=StructuredResult,
+            response_schema=schema,
             temperature=0.1,
             max_output_tokens=8192,
         ),
@@ -522,7 +538,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL") 
 
 
 async def structure_with_gemini(
-    markdown: str, user_key: str, page_type: str = "GENERAL"
+    markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False
 ) -> tuple[dict | None, str | None]:
     """
     Run Gemini extraction in a thread pool.
@@ -539,7 +555,7 @@ async def structure_with_gemini(
         try:
             loop = asyncio.get_event_loop()
             raw_text = await loop.run_in_executor(
-                _thread_pool, _call_gemini_sync, markdown, user_key, page_type
+                _thread_pool, _call_gemini_sync, markdown, user_key, page_type, is_search
             )
 
             # Strip accidental markdown fences
@@ -852,16 +868,16 @@ async def search_and_structure(payload: SearchRequest):
     page_type = await classify_page(combined_markdown, payload.user_gemini_key)
 
     # Step 4: Extract
-    structured, gemini_error = await structure_with_gemini(combined_markdown, payload.user_gemini_key, page_type)
+    structured, gemini_error = await structure_with_gemini(combined_markdown, payload.user_gemini_key, page_type, is_search=True)
 
     if structured is None:
         logger.warning(f"Gemini unavailable ({gemini_error}) — using fallback parser")
-        structured = fallback_structure_from_markdown(combined_markdown, error_msg=gemini_error)
+        structured = {"search_summary": gemini_error or "Failed via Gemini", "results": []}
 
     return SearchResponse(
         query=query,
         sources=sources,
         page_type=page_type,
-        structured_data=_build_structured_result(structured),
+        structured_data=structured,
         combined_markdown=combined_markdown,
     )

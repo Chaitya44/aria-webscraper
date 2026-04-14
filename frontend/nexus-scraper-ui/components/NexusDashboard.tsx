@@ -37,11 +37,22 @@ interface ScrapeResponse {
     structured_data: StructuredData;
     raw_markdown: string;
 }
+interface SearchResultItem {
+    title: string;
+    description: string;
+    price?: string;
+    image_url?: string;
+    source_url: string;
+}
+interface SearchStructuredResponse {
+    search_summary: string;
+    results: SearchResultItem[];
+}
 interface SearchResponse {
     query: string;
     sources: string[];
     page_type: string;
-    structured_data: StructuredData;
+    structured_data: SearchStructuredResponse;
     combined_markdown: string;
 }
 interface HistoryEntry {
@@ -312,9 +323,21 @@ export default function NexusDashboard() {
             window.dispatchEvent(new CustomEvent('aria-scraping', { detail: { active: false } }));
 
             // Compute summary counts
-            const sd = json.structured_data;
-            const tableCount = sd.data_tables?.length || 0;
-            const totalItems = sd.data_tables?.reduce((sum, t) => sum + (t.rows?.length || 0), 0) || 0;
+            let tableCount = 0;
+            let totalItems = 0;
+            let sdToSave: any = json.structured_data;
+
+            if (mode === "search") {
+                const searchSd = json.structured_data as SearchStructuredResponse;
+                tableCount = searchSd.results?.length || 0;
+                totalItems = tableCount;
+            } else {
+                const scrapeSd = json.structured_data as StructuredData;
+                tableCount = scrapeSd.data_tables?.length || 0;
+                totalItems = (scrapeSd.data_tables?.reduce((sum: number, t: any) => sum + (t.rows?.length || 0), 0) || 0) 
+                             + (scrapeSd.media?.length || 0) 
+                             + (scrapeSd.external_links?.length || 0);
+            }
 
             // Save to history
             const displayUrl = mode === "scrape" ? inputStr.trim() : `🔍 ${inputStr.trim()}`;
@@ -323,7 +346,7 @@ export default function NexusDashboard() {
                 url: displayUrl,
                 timestamp: new Date().toLocaleString(),
                 entityCount: tableCount,
-                totalItems: totalItems + (sd.media?.length || 0) + (sd.external_links?.length || 0),
+                totalItems: totalItems,
                 result: json,
             };
 
@@ -331,7 +354,7 @@ export default function NexusDashboard() {
                 await firestoreSave(user.uid, {
                     url: entry.url,
                     timestamp: entry.timestamp,
-                    data: { structured_data: sd } as any,
+                    data: { structured_data: sdToSave } as any,
                     schema: {} as any,
                     itemCount: entry.totalItems,
                 });
@@ -360,7 +383,7 @@ export default function NexusDashboard() {
                 setTodayCount(current + 1);
             }
 
-            addLog(`Done — ${tableCount} tables, ${sd.media?.length || 0} media, ${sd.external_links?.length || 0} links`);
+            addLog(`Done — ${tableCount} tables/items fetched`);
         } catch (e: any) {
             if (timerRef.current) clearInterval(timerRef.current);
             setLoading(false);
@@ -591,6 +614,9 @@ export default function NexusDashboard() {
 
                     {/* ── HERO ──────────────────────────────────────────── */}
                     <motion.div initial={{ opacity: 0, y: -30 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-4 md:mb-10">
+                        <div className="flex justify-center mb-6">
+                            <img src="/aria-logo.png" alt="Aria Intelligence Logo" className="h-16 md:h-24 object-contain brightness-110 drop-shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:drop-shadow-[0_0_30px_rgba(16,185,129,0.5)] transition-all duration-300" />
+                        </div>
                         <h1 className="text-4xl md:text-6xl lg:text-7xl font-black tracking-tight leading-[1.05] mb-3 md:mb-5">
                             <span className="text-transparent bg-clip-text bg-gradient-to-br from-emerald-300 via-teal-200 to-cyan-300">
                                 Extract structured data
@@ -872,119 +898,185 @@ export default function NexusDashboard() {
                     {/* ── RESULTS ──────────────────────────────────────── */}
                     <div className="mt-8 space-y-6">
                         <AnimatePresence>
-                            {result && (
+                            {result && typeof result.structured_data === 'object' && (
                                 <>
-                                    {/* Summary Card */}
-                                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                                        className="glass-card rounded-xl px-6 py-4 space-y-3">
-                                        <div className="flex flex-wrap items-center justify-between gap-3">
-                                            <div className="flex items-center space-x-3">
-                                                <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center">
-                                                    <Database size={16} className="text-white" />
+                                    {/* Dual-Branch: Search vs Scrape Rendering */}
+                                    {'search_summary' in result.structured_data ? (
+                                        // ── SEARCH RENDERER ──
+                                        <div className="space-y-6">
+                                            {/* Search Overview Card */}
+                                            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                                                className="glass-card rounded-xl px-6 py-4 space-y-3 border-cyan-500/10">
+                                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                                    <div className="flex items-center space-x-3">
+                                                        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center">
+                                                            <Search size={16} className="text-white" />
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-white font-semibold text-sm">Deep Web Search Complete</p>
+                                                            <p className="text-gray-500 text-xs">
+                                                                {(result.structured_data as SearchStructuredResponse).results?.length || 0} top results extracted · {elapsed}s
+                                                            </p>
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <p className="text-white font-semibold text-sm">Extraction Complete</p>
-                                                    <p className="text-gray-500 text-xs">
-                                                        {result.structured_data.data_tables?.length || 0} tables · {result.structured_data.media?.length || 0} media · {result.structured_data.external_links?.length || 0} links · {elapsed}s
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <button onClick={exportJSON}
-                                                className="flex items-center space-x-2 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-gray-300 hover:text-white px-4 py-2 rounded-lg transition-all font-medium">
-                                                <Download size={13} /><span>Export JSON</span>
-                                            </button>
-                                        </div>
-                                        {result.structured_data.page_summary && (
-                                            <p className="text-gray-300 text-sm leading-relaxed border-t border-white/[0.06] pt-3">
-                                                {result.structured_data.page_summary}
-                                            </p>
-                                        )}
-                                    </motion.div>
+                                                <p className="text-cyan-100 text-sm leading-relaxed pt-2">
+                                                    {(result.structured_data as SearchStructuredResponse).search_summary}
+                                                </p>
+                                            </motion.div>
 
-                                    {/* Data Tables */}
-                                    {result.structured_data.data_tables?.map((table, idx) => (
-                                        <motion.div key={idx} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }}>
-                                            <div className="flex items-center justify-between mb-3">
-                                                <div className="flex items-center space-x-2.5">
-                                                    <Table2 className="text-emerald-500" size={15} />
-                                                    <h2 className="text-sm font-bold text-white tracking-wide">{table.title || `Table ${idx + 1}`}</h2>
-                                                    <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                        {table.rows?.length || 0} rows
-                                                    </span>
-                                                </div>
-                                                {table.rows?.length > 0 && (
-                                                    <button onClick={() => exportCSV(table)}
-                                                        className="text-[11px] text-gray-500 hover:text-gray-300 bg-white/[0.03] hover:bg-white/[0.06] px-3 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium">
-                                                        CSV ↓
-                                                    </button>
-                                                )}
-                                            </div>
-                                            <div className="glass-card rounded-xl overflow-hidden">
-                                                <div className="overflow-x-auto">
-                                                    <table className="nexus-table w-full text-left">
-                                                        <thead>
-                                                            <tr>
-                                                                <th className="w-10 text-center">#</th>
-                                                                {table.headers?.map((h) => <th key={h}>{h}</th>)}
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            {table.rows?.map((row, rIdx) => (
-                                                                <tr key={rIdx}>
-                                                                    <td className="text-center text-gray-700 text-xs">{rIdx + 1}</td>
-                                                                    {row.map((cell, cIdx) => <td key={cIdx}>{renderCell(cell)}</td>)}
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </div>
-                                        </motion.div>
-                                    ))}
-
-                                    {/* Media */}
-                                    {result.structured_data.media?.length > 0 && (
-                                        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                                            <div className="flex items-center space-x-2.5 mb-3">
-                                                <Globe className="text-cyan-500" size={15} />
-                                                <h2 className="text-sm font-bold text-white tracking-wide">Media</h2>
-                                                <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                    {result.structured_data.media.length}
-                                                </span>
-                                            </div>
-                                            <div className="glass-card rounded-xl p-4">
-                                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                                                    {result.structured_data.media.map((m, i) => (
-                                                        <a key={i} href={m.url} target="_blank" rel="noopener noreferrer"
-                                                            className="block rounded-lg overflow-hidden border border-white/[0.06] hover:border-emerald-500/30 transition-all group">
-                                                            <div className="aspect-video bg-white/[0.02] flex items-center justify-center overflow-hidden">
-                                                                {m.type === "video" ? (
-                                                                    <span className="text-gray-500 text-xs">🎬 Video</span>
+                                            {/* Search Results Grid */}
+                                            {(result.structured_data as SearchStructuredResponse).results?.length > 0 && (
+                                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                    {(result.structured_data as SearchStructuredResponse).results.map((item, idx) => (
+                                                        <motion.div key={idx} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }}
+                                                            className="flex flex-col glass-card glass-card-hover rounded-xl overflow-hidden group">
+                                                            
+                                                            {/* Image Header */}
+                                                            <div className="h-40 bg-[#08080d] relative overflow-hidden flex items-center justify-center border-b border-white/[0.04]">
+                                                                {item.image_url ? (
+                                                                    <img src={item.image_url} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                                                                 ) : (
-                                                                    <img src={m.url} alt={m.alt || ""} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                                                    <Globe size={40} className="text-gray-700 mx-auto opacity-30" />
+                                                                )}
+                                                                {item.price && item.price.toLowerCase() !== "none" && (
+                                                                    <div className="absolute top-3 right-3 bg-black/80 backdrop-blur border border-white/10 px-3 py-1 rounded-full flex items-center shrink-0">
+                                                                        <span className="text-emerald-400 font-bold text-sm tracking-wide">{item.price}</span>
+                                                                    </div>
                                                                 )}
                                                             </div>
-                                                            {m.alt && <p className="text-[10px] text-gray-500 p-2 truncate">{m.alt}</p>}
-                                                        </a>
+
+                                                            {/* Content Body */}
+                                                            <div className="p-5 flex-1 flex flex-col">
+                                                                <h3 className="text-white font-bold text-base leading-snug mb-2 line-clamp-2 group-hover:text-cyan-400 transition-colors">{item.title}</h3>
+                                                                <p className="text-gray-400 text-xs leading-relaxed line-clamp-3 mb-4 flex-1">
+                                                                    {item.description}
+                                                                </p>
+                                                                <a href={item.source_url} target="_blank" rel="noopener noreferrer"
+                                                                    className="mt-auto w-full flex items-center justify-center space-x-2 bg-white/[0.03] hover:bg-cyan-500/10 border border-white/[0.08] hover:border-cyan-500/30 text-gray-300 hover:text-cyan-300 py-2.5 rounded-lg transition-all font-medium text-xs">
+                                                                    <ExternalLink size={14} />
+                                                                    <span>Visit Source</span>
+                                                                </a>
+                                                            </div>
+                                                        </motion.div>
                                                     ))}
                                                 </div>
-                                            </div>
-                                        </motion.div>
-                                    )}
+                                            )}
+                                        </div>
+                                    ) : (
+                                        // ── SCRAPE RENDERER ──
+                                        <div className="space-y-6">
+                                            {/* Summary Card */}
+                                            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                                                className="glass-card rounded-xl px-6 py-4 space-y-3">
+                                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                                    <div className="flex items-center space-x-3">
+                                                        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center">
+                                                            <Database size={16} className="text-white" />
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-white font-semibold text-sm">Extraction Complete</p>
+                                                            <p className="text-gray-500 text-xs">
+                                                                {(result.structured_data as StructuredData).data_tables?.length || 0} tables · {(result.structured_data as StructuredData).media?.length || 0} media · {(result.structured_data as StructuredData).external_links?.length || 0} links · {elapsed}s
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <button onClick={exportJSON}
+                                                        className="flex items-center space-x-2 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-gray-300 hover:text-white px-4 py-2 rounded-lg transition-all font-medium">
+                                                        <Download size={13} /><span>Export JSON</span>
+                                                    </button>
+                                                </div>
+                                                {(result.structured_data as StructuredData).page_summary && (
+                                                    <p className="text-gray-300 text-sm leading-relaxed border-t border-white/[0.06] pt-3">
+                                                        {(result.structured_data as StructuredData).page_summary}
+                                                    </p>
+                                                )}
+                                            </motion.div>
+
+                                            {/* Data Tables */}
+                                            {(result.structured_data as StructuredData).data_tables?.map((table, idx) => (
+                                                <motion.div key={idx} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }}>
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <div className="flex items-center space-x-2.5">
+                                                            <Table2 className="text-emerald-500" size={15} />
+                                                            <h2 className="text-sm font-bold text-white tracking-wide">{table.title || `Table ${idx + 1}`}</h2>
+                                                            <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                                {table.rows?.length || 0} rows
+                                                            </span>
+                                                        </div>
+                                                        {table.rows?.length > 0 && (
+                                                            <button onClick={() => exportCSV(table)}
+                                                                className="text-[11px] text-gray-500 hover:text-gray-300 bg-white/[0.03] hover:bg-white/[0.06] px-3 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium">
+                                                                CSV ↓
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                    <div className="glass-card rounded-xl overflow-hidden">
+                                                        <div className="overflow-x-auto">
+                                                            <table className="nexus-table w-full text-left">
+                                                                <thead>
+                                                                    <tr>
+                                                                        <th className="w-10 text-center">#</th>
+                                                                        {table.headers?.map((h) => <th key={h}>{h}</th>)}
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    {table.rows?.map((row, rIdx) => (
+                                                                        <tr key={rIdx}>
+                                                                            <td className="text-center text-gray-700 text-xs">{rIdx + 1}</td>
+                                                                            {row.map((cell, cIdx) => <td key={cIdx}>{renderCell(cell)}</td>)}
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    </div>
+                                                </motion.div>
+                                            ))}
+
+                                            {/* Media */}
+                                            {(result.structured_data as StructuredData).media?.length > 0 && (
+                                                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+                                                    <div className="flex items-center space-x-2.5 mb-3">
+                                                        <Globe className="text-cyan-500" size={15} />
+                                                        <h2 className="text-sm font-bold text-white tracking-wide">Media</h2>
+                                                        <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                            {(result.structured_data as StructuredData).media.length}
+                                                        </span>
+                                                    </div>
+                                                    <div className="glass-card rounded-xl p-4">
+                                                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                                                            {(result.structured_data as StructuredData).media.map((m, i) => (
+                                                                <a key={i} href={m.url} target="_blank" rel="noopener noreferrer"
+                                                                    className="block rounded-lg overflow-hidden border border-white/[0.06] hover:border-emerald-500/30 transition-all group">
+                                                                    <div className="aspect-video bg-white/[0.02] flex items-center justify-center overflow-hidden">
+                                                                        {m.type === "video" ? (
+                                                                            <span className="text-gray-500 text-xs">🎬 Video</span>
+                                                                        ) : (
+                                                                            <img src={m.url} alt={m.alt || ""} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                                                        )}
+                                                                    </div>
+                                                                    {m.alt && <p className="text-[10px] text-gray-500 p-2 truncate">{m.alt}</p>}
+                                                                </a>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </motion.div>
+                                            )}
 
                                     {/* External Links */}
-                                    {result.structured_data.external_links?.length > 0 && (
+                                    {(result.structured_data as StructuredData).external_links?.length > 0 && (
                                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                                             <div className="flex items-center space-x-2.5 mb-3">
                                                 <ExternalLink className="text-purple-400" size={15} />
                                                 <h2 className="text-sm font-bold text-white tracking-wide">External Links</h2>
                                                 <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                    {result.structured_data.external_links.length}
+                                                    {(result.structured_data as StructuredData).external_links.length}
                                                 </span>
                                             </div>
                                             <div className="glass-card rounded-xl p-4">
                                                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                                                    {result.structured_data.external_links.map((link, i) => (
+                                                    {(result.structured_data as StructuredData).external_links.map((link, i) => (
                                                         <a key={i} href={link} target="_blank" rel="noopener noreferrer"
                                                             className="block text-cyan-400/80 hover:text-cyan-300 text-xs truncate transition-colors">
                                                             {link}
@@ -996,13 +1088,13 @@ export default function NexusDashboard() {
                                         )}
 
                                     {/* Named Links (text + URL) */}
-                                    {result.structured_data.links?.length > 0 && (
+                                    {(result.structured_data as StructuredData).links?.length > 0 && (
                                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                                             <div className="flex items-center space-x-2.5 mb-3">
                                                 <ExternalLink className="text-emerald-400" size={15} />
                                                 <h2 className="text-sm font-bold text-white tracking-wide">Page Links</h2>
                                                 <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                    {result.structured_data.links.length}
+                                                    {(result.structured_data as StructuredData).links.length}
                                                 </span>
                                             </div>
                                             <div className="glass-card rounded-xl overflow-hidden">
@@ -1016,7 +1108,7 @@ export default function NexusDashboard() {
                                                             </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {result.structured_data.links.map((link, i) => (
+                                                            {(result.structured_data as StructuredData).links.map((link, i) => (
                                                                 <tr key={i}>
                                                                     <td className="text-center text-gray-700 text-xs">{i + 1}</td>
                                                                     <td className="text-gray-300 text-xs">{link.text}</td>
@@ -1036,18 +1128,18 @@ export default function NexusDashboard() {
                                     )}
 
                                     {/* Page Headings */}
-                                    {result.structured_data.headings?.length > 0 && (
+                                    {(result.structured_data as StructuredData).headings?.length > 0 && (
                                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                                             <div className="flex items-center space-x-2.5 mb-3">
                                                 <Database className="text-violet-400" size={15} />
                                                 <h2 className="text-sm font-bold text-white tracking-wide">Page Headings</h2>
                                                 <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                    {result.structured_data.headings.length}
+                                                    {(result.structured_data as StructuredData).headings.length}
                                                 </span>
                                             </div>
                                             <div className="glass-card rounded-xl p-4">
                                                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                                                    {result.structured_data.headings.map((h, i) => (
+                                                    {(result.structured_data as StructuredData).headings.map((h, i) => (
                                                         <p key={i} className="text-gray-300 text-xs py-1 border-b border-white/[0.04] last:border-0">
                                                             <span className="text-violet-400/60 mr-2 font-mono text-[10px]">H{i === 0 ? '1' : '2+'}</span>
                                                             {h}
@@ -1059,17 +1151,17 @@ export default function NexusDashboard() {
                                     )}
 
                                     {/* Paragraphs / Body Text */}
-                                    {result.structured_data.paragraphs?.length > 0 && (
+                                    {(result.structured_data as StructuredData).paragraphs?.length > 0 && (
                                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                                             <div className="flex items-center space-x-2.5 mb-3">
                                                 <Zap className="text-amber-400" size={15} />
                                                 <h2 className="text-sm font-bold text-white tracking-wide">Body Text</h2>
                                                 <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                    {result.structured_data.paragraphs.length} paragraphs
+                                                    {(result.structured_data as StructuredData).paragraphs.length} paragraphs
                                                 </span>
                                             </div>
                                             <div className="glass-card rounded-xl p-4 space-y-3 max-h-96 overflow-y-auto">
-                                                {result.structured_data.paragraphs.map((para, i) => (
+                                                {(result.structured_data as StructuredData).paragraphs.map((para, i) => (
                                                     <p key={i} className="text-gray-400 text-xs leading-relaxed border-l-2 border-white/[0.06] pl-3 hover:border-emerald-500/30 transition-colors">
                                                         {para}
                                                     </p>
@@ -1077,7 +1169,9 @@ export default function NexusDashboard() {
                                             </div>
                                         </motion.div>
                                     )}
-                                </>
+                                </div>
+                            )}
+                        </>
                             )}
                         </AnimatePresence>
                     </div>
