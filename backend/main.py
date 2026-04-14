@@ -1,19 +1,26 @@
 """
-AIWebScraper Smart Microservice — v7.0
-FastAPI backend: Firecrawl for anti-bot Markdown + BYOK Gemini for structured JSON.
+AIWebScraper Smart Microservice — v8.0
+FastAPI backend: Firecrawl + BYOK Gemini + Two-Pass Classification.
 
-Changes in v7:
-- Upgraded Gemini SDK from google-generativeai (deprecated) to google-genai (official)
-- Switched model to gemini-2.5-flash via the new genai.Client API (no global configure())
-- Fallback pipe table parser now sanitizes HTML tags and markdown links from headers/cells
+Changes in v8:
+- Rate limiting: 10 extractions/day per Gemini key (in-memory, resets at UTC midnight)
+- New /search-and-structure endpoint using Firecrawl /v1/search
+- Two-Pass architecture: Pass 1 classifies page type (5k chars, fast),
+  Pass 2 extracts with a schema-aware prompt tuned to the page type
+- DIRECTORY_OR_LIST pages get a hard 20-item cap to prevent JSON truncation
+- Classifier uses response_schema for native JSON enforcement
+- JSON parsing wrapped in try/except with partial-JSON recovery
 """
 
 import os
 import re
 import json
+import hashlib
 import asyncio
 import logging
+from datetime import date
 from concurrent.futures import ThreadPoolExecutor
+from typing import Literal
 
 import httpx
 from google import genai
@@ -21,26 +28,62 @@ from google.genai import types
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 
 # ──────────────────────────── Config ───────────────────────────────
 
 load_dotenv()
 
-FIRECRAWL_API_KEY   = os.getenv("FIRECRAWL_API_KEY")
+FIRECRAWL_API_KEY    = os.getenv("FIRECRAWL_API_KEY")
 FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v1/scrape"
+FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v1/search"
 
 logger = logging.getLogger("aiwebscraper")
 logging.basicConfig(level=logging.INFO)
 
-_thread_pool = ThreadPoolExecutor(max_workers=4)
+_thread_pool = ThreadPoolExecutor(max_workers=6)
+
+# ──────────────────────────── Rate Limiter ─────────────────────────
+# In-memory daily rate limiter keyed by a short hash of the Gemini key.
+# Resets automatically when the UTC date changes.
+
+DAILY_LIMIT = 10
+usage_tracker: dict[str, dict] = {}
+
+
+def _key_id(gemini_key: str) -> str:
+    """Return a short non-reversible identifier derived from the API key."""
+    return hashlib.sha256(gemini_key.strip().encode()).hexdigest()[:16]
+
+
+def check_rate_limit(gemini_key: str) -> None:
+    """
+    Raise HTTP 429 if this key has already hit DAILY_LIMIT today.
+    Increments the counter on every successful check.
+    Thread-safe for single-process deployments (asyncio event loop is single-threaded).
+    """
+    today = str(date.today())
+    kid = _key_id(gemini_key)
+    entry = usage_tracker.get(kid)
+    if entry is None or entry["date"] != today:
+        usage_tracker[kid] = {"date": today, "count": 0}
+    if usage_tracker[kid]["count"] >= DAILY_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Daily limit of {DAILY_LIMIT} extractions per API key reached. "
+                "Resets at midnight UTC."
+            ),
+        )
+    usage_tracker[kid]["count"] += 1
+
 
 # ──────────────────────────── App Setup ────────────────────────────
 
 app = FastAPI(
     title="AIWebScraper — Smart Microservice",
-    description="Firecrawl + BYOK Gemini: scrape any page and get structured JSON.",
-    version="6.0.0",
+    description="Firecrawl + BYOK Gemini 2.5 Flash: scrape or search any page, get structured JSON.",
+    version="8.0.0",
 )
 
 app.add_middleware(
@@ -52,10 +95,15 @@ app.add_middleware(
 )
 
 
-# ──────────────────────────── Models ───────────────────────────────
+# ──────────────────────────── Request / Response Models ────────────
 
 class ScrapeRequest(BaseModel):
-    url: HttpUrl
+    url: str
+    user_gemini_key: str
+
+
+class SearchRequest(BaseModel):
+    query: str
     user_gemini_key: str
 
 
@@ -89,28 +137,45 @@ class StructuredResult(BaseModel):
 
 class ScrapeResponse(BaseModel):
     url: str
+    page_type: str = "GENERAL"
     structured_data: StructuredResult
     raw_markdown: str
 
 
-# ──────────────────────────── Markdown Pre-Cleaner ─────────────────
-# Applied BEFORE sending to Gemini — reduces noise and token waste.
+class SearchResponse(BaseModel):
+    query: str
+    sources: list[str] = []
+    page_type: str = "GENERAL"
+    structured_data: StructuredResult
+    combined_markdown: str
 
-_CLEAN_BR         = re.compile(r"<br\s*/?>",        re.IGNORECASE)
-_CLEAN_BOLD       = re.compile(r"</?b>",            re.IGNORECASE)
-_CLEAN_ITALIC     = re.compile(r"</?i>",            re.IGNORECASE)
-_CLEAN_SPAN       = re.compile(r"</?span[^>]*>",    re.IGNORECASE)
-_CLEAN_ANCHOR     = re.compile(r"<a\s[^>]*>|</a>",  re.IGNORECASE)
-_CLEAN_TAGS       = re.compile(r"<[^>]+>")
-_CLEAN_NBSP       = re.compile(r"&nbsp;")
-_CLEAN_AMP        = re.compile(r"&amp;")
-_CLEAN_ENTITIES   = re.compile(r"&[a-zA-Z]{2,8};")
-_CLEAN_SPACES     = re.compile(r"[ \t]{2,}")
+
+# ──────────────────────────── Pydantic Schema for Classifier ───────
+
+class _PageClassification(BaseModel):
+    """Minimal schema used ONLY for the Pass-1 classifier response."""
+    page_type: str   # ECOMMERCE | ARTICLE | DIRECTORY_OR_LIST | GENERAL
+
+
+PAGE_TYPES = {"ECOMMERCE", "ARTICLE", "DIRECTORY_OR_LIST", "GENERAL"}
+
+
+# ──────────────────────────── Markdown Pre-Cleaner ─────────────────
+
+_CLEAN_BR          = re.compile(r"<br\s*/?>",       re.IGNORECASE)
+_CLEAN_BOLD        = re.compile(r"</?b>",           re.IGNORECASE)
+_CLEAN_ITALIC      = re.compile(r"</?i>",           re.IGNORECASE)
+_CLEAN_SPAN        = re.compile(r"</?span[^>]*>",   re.IGNORECASE)
+_CLEAN_ANCHOR      = re.compile(r"<a\s[^>]*>|</a>", re.IGNORECASE)
+_CLEAN_TAGS        = re.compile(r"<[^>]+>")
+_CLEAN_NBSP        = re.compile(r"&nbsp;")
+_CLEAN_AMP         = re.compile(r"&amp;")
+_CLEAN_ENTITIES    = re.compile(r"&[a-zA-Z]{2,8};")
+_CLEAN_SPACES      = re.compile(r"[ \t]{2,}")
 _CLEAN_BLANK_LINES = re.compile(r"\n{3,}")
 
 
 def _pre_clean_markdown(text: str) -> str:
-    """Strip HTML residue from Firecrawl markdown before AI processing."""
     text = _CLEAN_BR.sub("\n", text)
     text = _CLEAN_BOLD.sub("", text)
     text = _CLEAN_ITALIC.sub("", text)
@@ -125,12 +190,8 @@ def _pre_clean_markdown(text: str) -> str:
     return text.strip()
 
 
-def _smart_truncate(text: str, max_chars: int = 90_000) -> str:
-    """
-    Instead of hard-cutting at max_chars (which loses the end of the page),
-    keep the first 70% and last 30% of the budget — captures both the main
-    content and any footer data like metadata, specs, or contact info.
-    """
+def _smart_truncate(text: str, max_chars: int = 1_000_000) -> str:
+    """Keep head 70% + tail 30% so footer/metadata is not lost."""
     if len(text) <= max_chars:
         return text
     head = int(max_chars * 0.70)
@@ -152,14 +213,13 @@ def _is_amazon_url(url: str) -> bool:
 # ──────────────────────────── Jina AI Fallback ────────────────────
 
 async def fetch_markdown_via_jina(url: str) -> str:
-    """Free fallback using Jina AI Reader (r.jina.ai). No API key required."""
     jina_url = f"https://r.jina.ai/{url}"
     headers = {
         "Accept": "text/markdown, text/plain, */*",
         "X-Return-Format": "markdown",
         "X-Timeout": "30",
         "X-With-Generated-Alt": "true",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
@@ -171,22 +231,15 @@ async def fetch_markdown_via_jina(url: str) -> str:
                 return text
             raise HTTPException(status_code=422, detail="Jina AI could not extract content from this page.")
         except httpx.HTTPStatusError:
-            raise HTTPException(
-                status_code=422,
-                detail="Both Firecrawl and Jina AI failed to load this page.",
-            )
+            raise HTTPException(status_code=422, detail="Both Firecrawl and Jina AI failed to load this page.")
         except httpx.RequestError:
             raise HTTPException(status_code=502, detail="Failed to reach Jina AI fallback service.")
 
 
-# ──────────────────────────── Firecrawl Extraction ─────────────────
+# ──────────────────────────── Firecrawl Scrape ─────────────────────
 
 async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
-    """
-    Call Firecrawl to get Markdown + structured links.
-    Returns (markdown_string, links_list).
-    links_list items: {"url": "...", "text": "..."}
-    """
+    """Returns (markdown, links_list)."""
     if not FIRECRAWL_API_KEY:
         raise HTTPException(status_code=500, detail="Server misconfiguration: FIRECRAWL_API_KEY is not set.")
 
@@ -195,19 +248,17 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
         "Authorization": f"Bearer {FIRECRAWL_API_KEY}",
     }
 
-    is_amazon = _is_amazon_url(url)
-
     payload: dict = {
         "url": url,
-        "formats": ["markdown", "links"],   # request links directly from Firecrawl
-        "onlyMainContent": True,            # strip nav/footer noise, give Gemini clean text
+        "formats": ["markdown", "links"],
+        "onlyMainContent": True,
         "removeBase64Images": True,
         "skipTlsVerification": True,
         "timeout": 90000,
         "waitFor": 5000,
     }
 
-    if is_amazon:
+    if _is_amazon_url(url):
         payload["mobile"] = True
         payload["waitFor"] = 6000
         payload["timeout"] = 120000
@@ -230,7 +281,6 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
                 error_body = e.response.json()
             except Exception:
                 pass
-
             if status == 404:
                 raise HTTPException(status_code=404, detail="The target webpage could not be found (404).")
             elif status in (401, 403):
@@ -238,7 +288,7 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
             elif status == 402:
                 raise HTTPException(status_code=502, detail="Firecrawl API quota exceeded.")
             elif status in (408, 500, 502, 503):
-                logger.warning(f"Firecrawl returned {status} — falling back to Jina AI Reader")
+                logger.warning(f"Firecrawl returned {status} — falling back to Jina AI")
                 fallback_md = await fetch_markdown_via_jina(url)
                 return fallback_md, []
             else:
@@ -247,14 +297,13 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
                     detail=f"Firecrawl error {status}: {error_body.get('error', e.response.text[:300])}",
                 )
         except httpx.TimeoutException:
-            logger.warning("Firecrawl timed out — falling back to Jina AI Reader")
+            logger.warning("Firecrawl timed out — falling back to Jina AI")
             fallback_md = await fetch_markdown_via_jina(url)
             return fallback_md, []
         except httpx.RequestError as exc:
             raise HTTPException(status_code=502, detail=f"Failed to reach Firecrawl: {str(exc)}")
 
     data = resp.json()
-
     if not data.get("success"):
         error_msg = data.get("error", "")
         logger.warning(f"Firecrawl success=false: {error_msg} — trying Jina fallback")
@@ -263,15 +312,71 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
 
     page_data = data.get("data", {})
     markdown = page_data.get("markdown", "")
-    links = page_data.get("links", [])     # list of {"url": "...", "text": "..."}
+    links = page_data.get("links", [])
 
     if not markdown:
-        raise HTTPException(
-            status_code=422,
-            detail="Firecrawl returned no Markdown content. The page may require login or is empty.",
-        )
+        raise HTTPException(status_code=422, detail="Firecrawl returned no content. The page may require login or is empty.")
 
     return markdown, links
+
+
+# ──────────────────────────── Firecrawl Search ─────────────────────
+
+async def search_via_firecrawl(query: str) -> tuple[list[str], list[str]]:
+    """
+    Search using Firecrawl /v1/search. Returns (markdowns_list, source_urls_list).
+    Pulls top 3 results and returns their markdown content.
+    """
+    if not FIRECRAWL_API_KEY:
+        raise HTTPException(status_code=500, detail="Server misconfiguration: FIRECRAWL_API_KEY is not set.")
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {FIRECRAWL_API_KEY}",
+    }
+
+    payload = {
+        "query": query,
+        "limit": 3,
+        "scrapeOptions": {
+            "formats": ["markdown"],
+            "onlyMainContent": True,
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            resp = await client.post(FIRECRAWL_SEARCH_URL, json=payload, headers=headers)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            raise HTTPException(
+                status_code=status,
+                detail=f"Firecrawl search failed ({status}). Check your API key or query.",
+            )
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to reach Firecrawl search: {str(exc)}")
+
+    data = resp.json()
+    if not data.get("success"):
+        raise HTTPException(status_code=502, detail=f"Firecrawl search returned success=false: {data.get('error', '')}")
+
+    results = data.get("data", [])
+    markdowns: list[str] = []
+    sources: list[str] = []
+
+    for result in results[:3]:
+        md = result.get("markdown", "").strip()
+        url = result.get("url") or result.get("metadata", {}).get("sourceURL", "")
+        if md:
+            markdowns.append(md)
+        if url:
+            sources.append(url)
+
+    if not markdowns:
+        raise HTTPException(status_code=422, detail=f"Firecrawl search returned no readable content for: '{query}'")
+
+    return markdowns, sources
 
 
 # ──────────────────────────── Gemini System Prompt ─────────────────
@@ -325,27 +430,83 @@ CRITICAL INSTRUCTIONS — violate none:
 10. If a field has no data, return an empty array [].\
 """
 
+# Extra instruction injected for DIRECTORY pages to prevent JSON truncation
+_DIRECTORY_CAP = (
+    "\n\nCRITICAL PREVENT TRUNCATION: This is a massive list/directory page. "
+    "You MUST stop extracting after a maximum of 20 items total across all arrays. "
+    "Do NOT attempt to extract the entire page — the output will truncate and fail. "
+    "Extract the BEST 20 items and stop."
+)
 
-# ──────────────────────────── Gemini Call ─────────────────────────
+# Classifier prompt
+_CLASSIFIER_PROMPT = """\
+Classify this web page into exactly one of these categories:
+- ECOMMERCE: Product listings, shopping pages, item details with prices, online stores.
+- ARTICLE: News articles, blog posts, Wikipedia pages, documentation, tutorials.
+- DIRECTORY_OR_LIST: Index pages, torrents sites, link directories, search result pages, massive item lists.
+- GENERAL: Everything else (homepages, portfolios, contact pages, etc.)
 
-def _call_gemini_sync(markdown: str, user_key: str) -> str:
+Return ONLY valid JSON with a single field "page_type".
+
+Page preview (first 5,000 characters):
+"""
+
+
+# ──────────────────────────── Pass 1: Classifier ───────────────────
+
+def _classify_page_sync(preview: str, user_key: str) -> str:
+    """Fast classifier — runs on first 5k chars, returns page_type string."""
+    client = genai.Client(api_key=user_key)
+    prompt = _CLASSIFIER_PROMPT + preview
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=_PageClassification,
+            temperature=0.0,
+            max_output_tokens=64,
+        ),
+    )
+    try:
+        result = json.loads(response.text)
+        page_type = result.get("page_type", "GENERAL").upper()
+        return page_type if page_type in PAGE_TYPES else "GENERAL"
+    except (json.JSONDecodeError, AttributeError):
+        return "GENERAL"
+
+
+async def classify_page(markdown: str, user_key: str) -> str:
+    """Async wrapper for the classifier. Defaults to GENERAL on any failure."""
+    preview = _pre_clean_markdown(markdown)[:5000]
+    loop = asyncio.get_event_loop()
+    try:
+        page_type = await loop.run_in_executor(_thread_pool, _classify_page_sync, preview, user_key)
+        logger.info(f"Page classified as: {page_type}")
+        return page_type
+    except Exception as exc:
+        logger.warning(f"Classifier failed ({exc}) — defaulting to GENERAL")
+        return "GENERAL"
+
+
+# ──────────────────────────── Pass 2: Extractor ────────────────────
+
+def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL") -> str:
     """
-    Synchronous Gemini call — runs in a thread executor.
-
-    Uses the new google-genai SDK (genai.Client) which is fully instance-scoped:
-    each Client holds its own API key with no global singleton state, making it
-    safe to call concurrently from multiple threads without race conditions.
+    Main extraction call — runs in a thread executor.
+    Uses genai.Client (instance-scoped, thread-safe, no global configure() race).
+    Injects a 20-item cap instruction for DIRECTORY_OR_LIST pages.
     """
     client = genai.Client(api_key=user_key)
 
     cleaned = _pre_clean_markdown(markdown)
-    # 1M character limit — handles massive pages without losing tail content
-    # _smart_truncate keeps head 70% + tail 30% if content exceeds this
     truncated = _smart_truncate(cleaned, max_chars=1_000_000)
 
-    logger.info(f"Sending {len(truncated)} chars to Gemini (after clean + truncate from {len(markdown)})")
+    logger.info(f"[{page_type}] Sending {len(truncated)} chars to Gemini (from {len(markdown)} raw)")
 
-    prompt = f"{GEMINI_SYSTEM_PROMPT}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
+    extra = _DIRECTORY_CAP if page_type == "DIRECTORY_OR_LIST" else ""
+    prompt = f"{GEMINI_SYSTEM_PROMPT}{extra}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
@@ -359,20 +520,25 @@ def _call_gemini_sync(markdown: str, user_key: str) -> str:
     return response.text
 
 
-async def structure_with_gemini(markdown: str, user_key: str) -> tuple[dict | None, str | None]:
+async def structure_with_gemini(
+    markdown: str, user_key: str, page_type: str = "GENERAL"
+) -> tuple[dict | None, str | None]:
     """
-    Run Gemini in a thread pool. Returns (result_dict, error_message).
-    error_message is None on success, or a human-readable string on failure.
+    Run Gemini extraction in a thread pool.
+    Returns (result_dict, error_message).
+    error_message is None on success, or a human-readable reason on failure.
+    JSON parsing wrapped in try/except with partial-JSON recovery.
     """
     max_retries = 3
     base_delay = 2
-    last_error_msg = None
+    last_error_msg: str | None = None
+    raw_text: str = ""
 
     for attempt in range(1, max_retries + 1):
         try:
             loop = asyncio.get_event_loop()
             raw_text = await loop.run_in_executor(
-                _thread_pool, _call_gemini_sync, markdown, user_key
+                _thread_pool, _call_gemini_sync, markdown, user_key, page_type
             )
 
             # Strip accidental markdown fences
@@ -382,36 +548,50 @@ async def structure_with_gemini(markdown: str, user_key: str) -> tuple[dict | No
                 cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
             result = json.loads(cleaned)
-            logger.info("Gemini succeeded on attempt %d", attempt)
+            logger.info("Gemini extraction succeeded on attempt %d (page_type=%s)", attempt, page_type)
             return result, None
 
         except json.JSONDecodeError as exc:
             logger.warning(f"Gemini JSON parse failed (attempt {attempt}): {exc}")
-            # Try salvaging partial JSON
+            # --- Graceful partial-JSON recovery ---
+            # Try to salvage a complete top-level object from truncated output
             try:
-                match = re.search(r'\{.*\}', raw_text, re.DOTALL)  # type: ignore
+                # Find the outermost { ... } block
+                match = re.search(r'\{.*\}', raw_text, re.DOTALL)
                 if match:
-                    return json.loads(match.group(0)), None
+                    candidate = match.group(0)
+                    result = json.loads(candidate)
+                    logger.info("Partial JSON recovery succeeded")
+                    return result, None
+            except Exception:
+                pass
+            # If recovery failed, truncate arrays that may have broken JSON
+            try:
+                # Remove trailing incomplete array/object by cutting at last full value
+                truncated_attempt = re.sub(r',\s*"[^"]*"\s*:\s*\[.*$', '', raw_text, flags=re.DOTALL)
+                truncated_attempt = truncated_attempt.rstrip(", \n\r\t") + "}"
+                result = json.loads(truncated_attempt)
+                logger.info("Truncated JSON recovery succeeded")
+                return result, None
             except Exception:
                 pass
             last_error_msg = f"Gemini returned malformed JSON: {exc}"
-            break  # No retrying bad JSON
+            break  # No point retrying bad JSON
 
         except Exception as exc:
             last_error_msg = str(exc)
             error_lower = last_error_msg.lower()
-
             logger.warning(f"Gemini attempt {attempt}/{max_retries} error: {exc}")
 
-            # Auth errors — surface immediately, don't retry
+            # Auth errors — surface immediately
             if any(k in error_lower for k in ("api key", "api_key", "authenticate", "permission denied", "invalid")):
                 return None, f"Invalid or missing Gemini API key. Please update your key in settings. ({exc})"
 
-            # Location / model access errors
+            # Region/access errors
             if "user location" in error_lower or "not supported" in error_lower:
                 return None, f"Gemini not available in your region or for this key tier. ({exc})"
 
-            # Quota / overload — retry with backoff
+            # Transient errors — retry with backoff
             is_transient = any(k in error_lower for k in (
                 "503", "unavailable", "429", "resource", "overloaded", "quota", "exhausted"
             ))
@@ -420,49 +600,49 @@ async def structure_with_gemini(markdown: str, user_key: str) -> tuple[dict | No
                 logger.warning(f"Transient error — retrying in {delay}s...")
                 await asyncio.sleep(delay)
                 continue
-
             break
 
     logger.warning(f"Gemini failed after {max_retries} attempts: {last_error_msg}")
     return None, last_error_msg
 
 
-# ──────────────────────────── Fallback Parser ─────────────────────
+# ──────────────────────────── Fallback Regex Parser ────────────────
 
-# Regex to extract markdown links: [text](url) or [text](url "title")
-_MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^)\s"]+)[^)]*\)')
-_MD_IMG  = re.compile(r'!\[([^\]]*)\]\((https?://[^)\s"]+)[^)]*\)')
-_RAW_URL = re.compile(r'(?<!\()\bhttps?://[^\s)<>\]"]+')
-_HEADING = re.compile(r'^(#{1,4})\s+(.+)$', re.MULTILINE)
-_BULLET  = re.compile(r'^[\-\*•]\s+(.{10,300})$', re.MULTILINE)
-_PRICE   = re.compile(r'[\u20b9$€£]\s?[\d,]+(?:\.\d{1,2})?|\b(?:INR|USD|EUR|GBP)\s?[\d,]+(?:\.\d{1,2})?', re.IGNORECASE)
-_RATING  = re.compile(r'([\d.]+)\s*(?:out of 5|/5|stars?|\u2605)', re.IGNORECASE)
-_TABLE   = re.compile(r'(\|.+\|\n\|[\s:|-]+\|\n(?:\|.+\|\n?)+)', re.MULTILINE)
-_PARA    = re.compile(r'(?:^|\n\n)([A-Z][^\n]{60,}(?:\n[^\n]+)*)', re.MULTILINE)
+_MD_LINK  = re.compile(r'\[([^\]]+)\]\((https?://[^)\s"]+)[^)]*\)')
+_MD_IMG   = re.compile(r'!\[([^\]]*)\]\((https?://[^)\s"]+)[^)]*\)')
+_RAW_URL  = re.compile(r'(?<!\()\bhttps?://[^\s)<>\]"]+')
+_HEADING  = re.compile(r'^(#{1,4})\s+(.+)$', re.MULTILINE)
+_BULLET   = re.compile(r'^[\-\*•]\s+(.{10,300})$', re.MULTILINE)
+_PRICE    = re.compile(r'[\u20b9$€£]\s?[\d,]+(?:\.\d{1,2})?|\b(?:INR|USD|EUR|GBP)\s?[\d,]+(?:\.\d{1,2})?', re.IGNORECASE)
+_RATING   = re.compile(r'([\d.]+)\s*(?:out of 5|/5|stars?|\u2605)', re.IGNORECASE)
+_TABLE    = re.compile(r'(\|.+\|\n\|[\s:|-]+\|\n(?:\|.+\|\n?)+)', re.MULTILINE)
+_PARA     = re.compile(r'(?:^|\n\n)([A-Z][^\n]{60,}(?:\n[^\n]+)*)', re.MULTILINE)
 
 
 def _clean_md_link_text(text: str) -> str:
-    """Replace [text](url) patterns with just 'text' in a string."""
     text = _MD_IMG.sub(r"[Image: \1]", text)
     text = _MD_LINK.sub(r"\1", text)
     return text.strip()
 
 
+def _sanitize_cell(text: str) -> str:
+    """Strip HTML tags and markdown links from a table cell."""
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    return text.strip()
+
+
 def fallback_structure_from_markdown(markdown: str, error_msg: str | None = None) -> dict:
-    """
-    Comprehensive fallback regex parser when Gemini is unavailable.
-    Properly cleans markdown links before displaying them.
-    """
-    # ── Images ────────────────────────────────────────────────────
+    """Comprehensive fallback regex parser when Gemini is unavailable."""
+
     media = [
         {"url": m.group(2), "type": "image", "alt": m.group(1) or ""}
         for m in _MD_IMG.finditer(markdown)
         if not m.group(2).endswith(('.svg', '.ico'))
     ][:30]
 
-    # ── Links (with text, cleaned) ────────────────────────────────
     links = []
-    seen_urls = set()
+    seen_urls: set[str] = set()
     for m in _MD_LINK.finditer(markdown):
         txt, url = m.group(1).strip(), m.group(2).strip()
         if url not in seen_urls and txt and not txt.startswith("http"):
@@ -470,19 +650,13 @@ def fallback_structure_from_markdown(markdown: str, error_msg: str | None = None
             seen_urls.add(url)
     links = links[:80]
 
-    # ── External links (raw URLs not already captured) ─────────────
     image_urls = {item["url"] for item in media}
     captured_urls = {l["url"] for l in links}
-    raw_urls = [
-        u for u in _RAW_URL.findall(markdown)
-        if u not in image_urls and u not in captured_urls
-    ]
+    raw_urls = [u for u in _RAW_URL.findall(markdown) if u not in image_urls and u not in captured_urls]
     external_links = sorted(set(raw_urls))[:80]
 
-    # ── Headings ─────────────────────────────────────────────────
     headings = [m.group(2).strip() for m in _HEADING.finditer(markdown)][:40]
 
-    # ── Paragraphs (clean markdown links out of them) ─────────────
     paragraphs = []
     for m in _PARA.finditer(markdown):
         raw = m.group(1).strip()
@@ -492,14 +666,10 @@ def fallback_structure_from_markdown(markdown: str, error_msg: str | None = None
             paragraphs.append(cleaned)
     paragraphs = paragraphs[:60]
 
-    # ── Page title (first H1 or first heading) ────────────────────
     page_title = headings[0] if headings else ""
-
-    # ── Prices / Ratings ─────────────────────────────────────────
-    prices  = list(dict.fromkeys(_PRICE.findall(markdown)))[:10]
+    prices = list(dict.fromkeys(_PRICE.findall(markdown)))[:10]
     ratings = _RATING.findall(markdown)
 
-    # ── Data Tables ───────────────────────────────────────────────
     data_tables = []
 
     if prices or ratings:
@@ -513,22 +683,10 @@ def fallback_structure_from_markdown(markdown: str, error_msg: str | None = None
         if rows:
             data_tables.append({"title": "Page Overview", "headers": ["Field", "Value"], "rows": rows})
 
-    # Bullet feature lists — clean markdown links from bullets
     bullets = [_clean_md_link_text(b) for b in _BULLET.findall(markdown)]
     bullets = [b for b in bullets if len(b) > 10 and not b.startswith("http")]
     if bullets:
-        data_tables.append({
-            "title": "Key Points",
-            "headers": ["Item"],
-            "rows": [[b] for b in bullets[:25]],
-        })
-
-    # Markdown pipe tables
-    def _sanitize_cell(text: str) -> str:
-        """Strip HTML tags and convert markdown links to plain text in a table cell."""
-        text = re.sub(r'<[^>]+>', '', text)                        # strip <br>, <b>, etc.
-        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)      # [text](url) → text
-        return text.strip()
+        data_tables.append({"title": "Key Points", "headers": ["Item"], "rows": [[b] for b in bullets[:25]]})
 
     for match in _TABLE.finditer(markdown):
         lines = match.group(0).strip().split('\n')
@@ -542,20 +700,11 @@ def fallback_structure_from_markdown(markdown: str, error_msg: str | None = None
             if headers and rows:
                 data_tables.append({"title": "Table", "headers": headers, "rows": rows})
 
-    # Headings table as last resort
     if not data_tables and headings:
-        data_tables.append({
-            "title": "Page Sections",
-            "headers": ["Section"],
-            "rows": [[h] for h in headings[:20]],
-        })
+        data_tables.append({"title": "Page Sections", "headers": ["Section"], "rows": [[h] for h in headings[:20]]})
 
-    # ── Summary ─────────────────────────────────────────────────
     err_note = f" | Gemini error: {error_msg}" if error_msg else " (Gemini unavailable — auto-parsed)"
-    if page_title:
-        page_summary = f"{page_title}.{err_note}"
-    else:
-        page_summary = f"Page content extracted successfully.{err_note}"
+    page_summary = f"{page_title}.{err_note}" if page_title else f"Page content extracted.{err_note}"
 
     return {
         "page_title": page_title,
@@ -569,49 +718,10 @@ def fallback_structure_from_markdown(markdown: str, error_msg: str | None = None
     }
 
 
-# ──────────────────────────── Routes ──────────────────────────────
+# ──────────────────────────── Response Builder ─────────────────────
 
-@app.get("/")
-async def health():
-    return {
-        "status": "ok",
-        "service": "aiwebscraper-smart-microservice",
-        "version": "6.0.0",
-    }
-
-
-@app.post("/scrape-and-structure", response_model=ScrapeResponse)
-async def scrape_and_structure(payload: ScrapeRequest):
-    """
-    Three-step pipeline:
-    1. Firecrawl: URL → clean Markdown + structured links
-    2. Pre-clean: strip HTML noise from Markdown
-    3. Gemini:    Markdown → comprehensive structured JSON (BYOK key)
-       Fallback:  Regex parser if Gemini fails (with error reason in summary)
-    """
-    url = str(payload.url)
-    logger.info(f"[v6] Starting scrape-and-structure for: {url}")
-
-    # Step 1: Scrape via Firecrawl (returns markdown + links)
-    raw_markdown, firecrawl_links = await fetch_markdown_via_firecrawl(url)
-    logger.info(f"Firecrawl returned {len(raw_markdown)} chars markdown, {len(firecrawl_links)} links")
-
-    # Step 2: Structure via Gemini (non-blocking thread executor)
-    structured, gemini_error = await structure_with_gemini(raw_markdown, payload.user_gemini_key)
-
-    if structured is None:
-        logger.warning(f"Gemini unavailable ({gemini_error}) — using fallback regex parser")
-        structured = fallback_structure_from_markdown(raw_markdown, error_msg=gemini_error)
-    else:
-        # Merge Firecrawl's structured links into Gemini result if Gemini missed them
-        gemini_link_urls = {l.get("url", "") for l in structured.get("links", [])}
-        for fc_link in firecrawl_links:
-            fc_url = fc_link.get("url", "")
-            fc_text = fc_link.get("text", "").strip()
-            if fc_url and fc_text and fc_url not in gemini_link_urls:
-                structured.setdefault("links", []).append({"text": fc_text, "url": fc_url})
-
-    logger.info("Structuring complete")
+def _build_structured_result(structured: dict, firecrawl_links: list[dict] | None = None) -> StructuredResult:
+    """Normalize a raw dict (from Gemini or fallback) into a validated StructuredResult."""
 
     def safe_str(v) -> str:
         return str(v) if not isinstance(v, str) else v
@@ -623,8 +733,22 @@ async def scrape_and_structure(payload: ScrapeRequest):
                 result.append([safe_str(cell) for cell in row])
         return result
 
-    # Build validated response
-    structured_data = StructuredResult(
+    gemini_link_urls: set[str] = set()
+    processed_links = []
+    for l in structured.get("links", []):
+        if isinstance(l, dict) and l.get("url") and l.get("text"):
+            gemini_link_urls.add(l["url"])
+            processed_links.append(LinkItem(text=safe_str(l["text"]), url=safe_str(l["url"])))
+
+    # Merge Firecrawl structured links if Gemini missed them
+    if firecrawl_links:
+        for fc in firecrawl_links:
+            fc_url = fc.get("url", "")
+            fc_text = fc.get("text", "").strip()
+            if fc_url and fc_text and fc_url not in gemini_link_urls:
+                processed_links.append(LinkItem(text=fc_text, url=fc_url))
+
+    return StructuredResult(
         page_title=safe_str(structured.get("page_title", "")),
         page_summary=safe_str(structured.get("page_summary", "No summary available.")),
         headings=[safe_str(h) for h in structured.get("headings", []) if h],
@@ -633,14 +757,7 @@ async def scrape_and_structure(payload: ScrapeRequest):
             MediaItem(**m) if isinstance(m, dict) else MediaItem(url=safe_str(m))
             for m in structured.get("media", [])
         ],
-        links=[
-            LinkItem(
-                text=safe_str(l.get("text", "") if isinstance(l, dict) else ""),
-                url=safe_str(l.get("url", "") if isinstance(l, dict) else l),
-            )
-            for l in structured.get("links", [])
-            if isinstance(l, dict) and l.get("url") and l.get("text")
-        ],
+        links=processed_links,
         external_links=[safe_str(l) for l in structured.get("external_links", [])],
         data_tables=[
             DataTable(
@@ -652,8 +769,97 @@ async def scrape_and_structure(payload: ScrapeRequest):
         ],
     )
 
+
+# ──────────────────────────── Routes ──────────────────────────────
+
+
+@app.get("/")
+async def health():
+    return {
+        "status": "ok",
+        "service": "aiwebscraper-smart-microservice",
+        "version": "8.0.0",
+    }
+
+
+@app.post("/scrape-and-structure", response_model=ScrapeResponse)
+async def scrape_and_structure(payload: ScrapeRequest):
+    """
+    Full pipeline:
+    1. Rate-limit check (10/day per Gemini key)
+    2. Firecrawl: URL → Markdown + links
+    3. Pass 1: Classifier (5k chars → page_type)
+    4. Pass 2: Gemini extractor (schema-aware prompt)
+    5. Fallback regex parser if Gemini fails
+    """
+    url = str(payload.url)
+    check_rate_limit(payload.user_gemini_key)
+    logger.info(f"[v8] scrape-and-structure: {url}")
+
+    # Step 1: Scrape
+    raw_markdown, firecrawl_links = await fetch_markdown_via_firecrawl(url)
+    logger.info(f"Firecrawl: {len(raw_markdown)} chars, {len(firecrawl_links)} links")
+
+    # Step 2: Classify (Pass 1)
+    page_type = await classify_page(raw_markdown, payload.user_gemini_key)
+
+    # Step 3: Extract (Pass 2)
+    structured, gemini_error = await structure_with_gemini(raw_markdown, payload.user_gemini_key, page_type)
+
+    if structured is None:
+        logger.warning(f"Gemini unavailable ({gemini_error}) — using fallback parser")
+        structured = fallback_structure_from_markdown(raw_markdown, error_msg=gemini_error)
+
     return ScrapeResponse(
         url=url,
-        structured_data=structured_data,
+        page_type=page_type,
+        structured_data=_build_structured_result(structured, firecrawl_links),
         raw_markdown=raw_markdown,
+    )
+
+
+@app.post("/search-and-structure", response_model=SearchResponse)
+async def search_and_structure(payload: SearchRequest):
+    """
+    Search pipeline:
+    1. Rate-limit check (10/day per Gemini key)
+    2. Firecrawl search: query → top 3 result markdowns
+    3. Concatenate markdowns
+    4. Pass 1: Classify combined markdown
+    5. Pass 2: Gemini extraction
+    6. Fallback regex parser if Gemini fails
+    """
+    query = payload.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Search query cannot be empty.")
+
+    check_rate_limit(payload.user_gemini_key)
+    logger.info(f"[v8] search-and-structure: '{query}'")
+
+    # Step 1: Search
+    markdowns, sources = await search_via_firecrawl(query)
+    logger.info(f"Firecrawl search: {len(markdowns)} results for '{query}'")
+
+    # Step 2: Combine results with source attribution headers
+    combined_parts = []
+    for i, (md, src) in enumerate(zip(markdowns, sources), 1):
+        combined_parts.append(f"## Source {i}: {src}\n\n{md}")
+    combined_markdown = "\n\n---\n\n".join(combined_parts)
+
+    # Step 3: Classify
+    page_type = await classify_page(combined_markdown, payload.user_gemini_key)
+
+    # Step 4: Extract
+    structured, gemini_error = await structure_with_gemini(combined_markdown, payload.user_gemini_key, page_type)
+
+    if structured is None:
+        logger.warning(f"Gemini unavailable ({gemini_error}) — using fallback parser")
+        structured = fallback_structure_from_markdown(combined_markdown, error_msg=gemini_error)
+
+    return SearchResponse(
+        query=query,
+        sources=sources,
+        page_type=page_type,
+        structured_data=_build_structured_result(structured),
+        combined_markdown=combined_markdown,
     )
