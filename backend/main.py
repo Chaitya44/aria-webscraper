@@ -1,15 +1,11 @@
 """
-AIWebScraper Smart Microservice — v6.0
+AIWebScraper Smart Microservice — v7.0
 FastAPI backend: Firecrawl for anti-bot Markdown + BYOK Gemini for structured JSON.
 
-Fixes in v6:
-- Gemini client is instantiated fresh per-call (no global genai.configure race condition)
-- Comprehensive extraction: paragraphs, headings, links WITH text, media, tables, metadata
-- Markdown pre-cleaner strips HTML noise before sending to Gemini
-- Smart truncation: keeps head + tail of content instead of hard-cutting
-- Fallback regex parser now cleans markdown links properly
-- Gemini error reason is surfaced in page_summary so user knows what went wrong
-- Firecrawl requests both markdown + links formats for richer raw data
+Changes in v7:
+- Upgraded Gemini SDK from google-generativeai (deprecated) to google-genai (official)
+- Switched model to gemini-2.5-flash via the new genai.Client API (no global configure())
+- Fallback pipe table parser now sanitizes HTML tags and markdown links from headers/cells
 """
 
 import os
@@ -20,7 +16,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -335,29 +332,11 @@ def _call_gemini_sync(markdown: str, user_key: str) -> str:
     """
     Synchronous Gemini call — runs in a thread executor.
 
-    CRITICAL FIX: We do NOT call genai.configure() globally here because
-    that mutates a global singleton and causes race conditions in the thread
-    pool when multiple requests are in flight simultaneously.
-
-    Instead, we pass the API key directly to the GenerativeModel client
-    using google.ai.generativelanguage_v1beta.GenerativeServiceClient
-    through the transport layer, which is per-instance and thread-safe.
+    Uses the new google-genai SDK (genai.Client) which is fully instance-scoped:
+    each Client holds its own API key with no global singleton state, making it
+    safe to call concurrently from multiple threads without race conditions.
     """
-    # Create a fresh, isolated client using the user's key — no global state mutation
-    client = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        generation_config=genai.GenerationConfig(
-            response_mime_type="application/json",
-            temperature=0.1,
-            max_output_tokens=8192,
-        ),
-        system_instruction=GEMINI_SYSTEM_PROMPT,
-    )
-
-    # Configure the SDK with the user's key for this thread
-    # We use a locally-scoped configure so we don't race with other threads
-    import google.generativeai as _genai
-    _genai.configure(api_key=user_key)
+    client = genai.Client(api_key=user_key)
 
     cleaned = _pre_clean_markdown(markdown)
     # 1M character limit — handles massive pages without losing tail content
@@ -366,8 +345,17 @@ def _call_gemini_sync(markdown: str, user_key: str) -> str:
 
     logger.info(f"Sending {len(truncated)} chars to Gemini (after clean + truncate from {len(markdown)})")
 
-    prompt = f"Extract ALL data from this web page markdown:\n\n{truncated}"
-    response = client.generate_content(prompt)
+    prompt = f"{GEMINI_SYSTEM_PROMPT}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.1,
+            max_output_tokens=8192,
+        ),
+    )
     return response.text
 
 
@@ -536,13 +524,19 @@ def fallback_structure_from_markdown(markdown: str, error_msg: str | None = None
         })
 
     # Markdown pipe tables
+    def _sanitize_cell(text: str) -> str:
+        """Strip HTML tags and convert markdown links to plain text in a table cell."""
+        text = re.sub(r'<[^>]+>', '', text)                        # strip <br>, <b>, etc.
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)      # [text](url) → text
+        return text.strip()
+
     for match in _TABLE.finditer(markdown):
         lines = match.group(0).strip().split('\n')
         if len(lines) >= 3:
-            headers = [h.strip() for h in lines[0].split('|') if h.strip()]
+            headers = [_sanitize_cell(h) for h in lines[0].split('|') if h.strip()]
             rows = []
             for row_line in lines[2:]:
-                cells = [_clean_md_link_text(c.strip()) for c in row_line.split('|') if c.strip()]
+                cells = [_sanitize_cell(_clean_md_link_text(c.strip())) for c in row_line.split('|') if c.strip()]
                 if cells:
                     rows.append(cells)
             if headers and rows:
