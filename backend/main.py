@@ -202,8 +202,8 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
 
     payload: dict = {
         "url": url,
-        "formats": ["markdown", "links"],   # <-- request links directly from Firecrawl
-        "onlyMainContent": False,           # get EVERYTHING — Gemini will structure it
+        "formats": ["markdown", "links"],   # request links directly from Firecrawl
+        "onlyMainContent": True,            # strip nav/footer noise, give Gemini clean text
         "removeBase64Images": True,
         "skipTlsVerification": True,
         "timeout": 90000,
@@ -280,20 +280,20 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
 # ──────────────────────────── Gemini System Prompt ─────────────────
 
 GEMINI_SYSTEM_PROMPT = """\
-You are a comprehensive web data extraction engine. Your job is to analyze the Markdown content of a scraped web page and extract ALL available information into a rich, structured JSON object.
+You are an expert data extraction assistant. Analyze the provided Markdown content from a web page and extract structured information exhaustively.
 
-Return a JSON object with EXACTLY these fields:
+Return a strictly valid JSON object with EXACTLY these fields:
 
 {
-  "page_title": "The main title or name of the page (from H1 or <title>)",
-  "page_summary": "A detailed 4-6 sentence summary covering what the page is about, its purpose, and key content.",
-  "headings": ["Every heading found on the page (H1, H2, H3, H4), as plain text strings, in order"],
-  "paragraphs": ["Every meaningful paragraph of text on the page, cleaned of markdown formatting. Each item is one paragraph."],
+  "page_title": "The main title or name of the page (from H1 or the first heading)",
+  "page_summary": "A concise 2-3 sentence summary of what the page is about.",
+  "headings": ["Every heading found on the page (H1, H2, H3, H4) as plain text strings, in document order"],
+  "paragraphs": ["Every meaningful paragraph of body text, cleaned of markdown symbols. Each item is one paragraph."],
   "media": [
     {"url": "full image/video URL", "type": "image or video", "alt": "alt text or description"}
   ],
   "links": [
-    {"text": "The visible link text (NEVER the raw URL)", "url": "full https://... URL"}
+    {"text": "The visible link text — NEVER the raw URL as text", "url": "full https://... URL"}
   ],
   "external_links": ["array of unique external http/https URLs found in content"],
   "data_tables": [
@@ -305,28 +305,27 @@ Return a JSON object with EXACTLY these fields:
   ]
 }
 
-STRICT RULES — violate none:
+CRITICAL INSTRUCTIONS — violate none:
 
-1. CLEAN MARKDOWN LINKS: Never output raw markdown like [Text](URL). Extract ONLY the text part.
-   Example: [Leonardo DiCaprio](https://en.wikipedia.org/wiki/Leo) → use "Leonardo DiCaprio" as text, the URL goes in the url field.
+1. BE EXHAUSTIVE: Do not summarize lists. Extract EVERY single image, EVERY link, and EVERY row of data you can find. Never output "..." or "etc" to cut corners. If a page has 50 paragraphs, return all 50.
 
-2. PARAGRAPHS: Extract ALL body text paragraphs. Strip markdown symbols (**, *, #, >, -) from text. Each paragraph should be a clean readable sentence or group of sentences.
+2. DATA TABLES: Aggressively group repeating patterns (pricing, specs, feature lists, reviews, product grids, cast lists, FAQs, comparison tables) into the data_tables array.
 
-3. HEADINGS: Include every heading (H1 through H4) as a plain text string. Strip # symbols.
+3. CLEAN MARKDOWN LINKS: Never output raw markdown like [Text](URL). For the links array, extract the visible text as "text" and the URL as "url". Example: [Leonardo DiCaprio](https://...) → {"text": "Leonardo DiCaprio", "url": "https://..."}.
 
-4. MEDIA: Find every image using ![alt](url) syntax AND raw image URLs (.jpg, .png, .gif, .webp, .svg). Also find video embeds.
+4. ALL row cell values MUST be plain text strings. Never put objects, arrays, or nulls inside a row cell. If a cell is empty, use an empty string "".
 
-5. LINKS: In the links array, EVERY item must have readable "text" (never a raw URL as text) and a full "url". Links where text equals the URL should go only in external_links, not links.
+5. HEADINGS: Include every H1–H4 as a plain text string. Strip all # symbols.
 
-6. DATA TABLES: Extract markdown tables AND any repeating structured patterns (pricing, specs, features, product lists, comparison tables, FAQ, cast lists, etc.) into table format.
+6. PARAGRAPHS: Strip all markdown symbols (**, *, _, #, >, -) from paragraph text. Return clean readable sentences.
 
-7. COMPLETENESS: Extract ALL content. Do not skip sections. If the page has 50 paragraphs, return all 50.
+7. MEDIA: Find every image using ![alt](url) syntax AND any raw image URLs (.jpg, .png, .gif, .webp, .svg). Find video embeds too.
 
-8. NO MARKDOWN IN OUTPUT: All string values must be plain text. No **, *, _, #, >, or ` characters in values.
+8. NO MARKDOWN IN OUTPUT: All string values must be plain text — no **, *, _, #, >, or backtick characters inside values.
 
-9. ARRAYS ONLY CONTAIN STRINGS or the specified object shapes. Never nest arrays inside arrays.
+9. Output ONLY raw, parseable JSON. Do not wrap it in ```json fences or any markdown block. No commentary, no explanation.
 
-10. Return ONLY the raw JSON object. No ```json fences, no commentary, no explanation.\
+10. If a field has no data, return an empty array [].\
 """
 
 
@@ -361,7 +360,9 @@ def _call_gemini_sync(markdown: str, user_key: str) -> str:
     _genai.configure(api_key=user_key)
 
     cleaned = _pre_clean_markdown(markdown)
-    truncated = _smart_truncate(cleaned, max_chars=90_000)
+    # 1M character limit — handles massive pages without losing tail content
+    # _smart_truncate keeps head 70% + tail 30% if content exceeds this
+    truncated = _smart_truncate(cleaned, max_chars=1_000_000)
 
     logger.info(f"Sending {len(truncated)} chars to Gemini (after clean + truncate from {len(markdown)})")
 
