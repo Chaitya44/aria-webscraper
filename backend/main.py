@@ -744,10 +744,11 @@ def _build_structured_result(structured: dict, firecrawl_links: list[dict] | Non
     # Merge Firecrawl structured links if Gemini missed them
     if firecrawl_links:
         for fc in firecrawl_links:
-            fc_url = fc.get("url", "")
-            fc_text = fc.get("text", "").strip()
-            if fc_url and fc_text and fc_url not in gemini_link_urls:
-                processed_links.append(LinkItem(text=fc_text, url=fc_url))
+            if isinstance(fc, dict):
+                fc_url = fc.get("url", "")
+                fc_text = fc.get("text", "").strip()
+                if fc_url and fc_text and fc_url not in gemini_link_urls:
+                    processed_links.append(LinkItem(text=fc_text, url=fc_url))
 
     return StructuredResult(
         page_title=safe_str(structured.get("page_title", "")),
