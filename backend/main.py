@@ -492,7 +492,7 @@ async def classify_page(markdown: str, user_key: str) -> str:
 
 # ──────────────────────────── Pass 2: Extractor ────────────────────
 
-def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL") -> str:
+def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", model: str = "gemini-2.5-flash") -> str:
     """
     Main extraction call — runs in a thread executor.
     Uses genai.Client (instance-scoped, thread-safe, no global configure() race).
@@ -509,7 +509,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL") 
     prompt = f"{GEMINI_SYSTEM_PROMPT}{extra}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=model,
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
@@ -537,9 +537,12 @@ async def structure_with_gemini(
 
     for attempt in range(1, max_retries + 1):
         try:
+            # Graceful model fallback on final attempt if API is experiencing high demand
+            model_to_use = "gemini-2.5-flash" if attempt < 3 else "gemini-1.5-flash"
+            
             loop = asyncio.get_event_loop()
             raw_text = await loop.run_in_executor(
-                _thread_pool, _call_gemini_sync, markdown, user_key, page_type
+                _thread_pool, _call_gemini_sync, markdown, user_key, page_type, model_to_use
             )
 
             # Strip accidental markdown fences
