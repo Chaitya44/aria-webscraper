@@ -33,8 +33,16 @@ interface StructuredData {
 }
 interface ScrapeResponse {
     url: string;
+    page_type: string;
     structured_data: StructuredData;
     raw_markdown: string;
+}
+interface SearchResponse {
+    query: string;
+    sources: string[];
+    page_type: string;
+    structured_data: StructuredData;
+    combined_markdown: string;
 }
 interface HistoryEntry {
     id: string;
@@ -42,7 +50,7 @@ interface HistoryEntry {
     timestamp: string;
     entityCount: number;
     totalItems: number;
-    result: ScrapeResponse;
+    result: ScrapeResponse | SearchResponse;
 }
 
 const HISTORY_KEY = "aria_history";
@@ -135,10 +143,12 @@ const FEATURES = [
 // ── Main Component ───────────────────────────────────────────────────────────
 export default function NexusDashboard() {
     const { user } = useAuth();
+    const [mode, setMode] = useState<"scrape" | "search">("scrape");
     const [url, setUrl] = useState("");
+    const [searchQuery, setSearchQuery] = useState("");
 
     const [loading, setLoading] = useState(false);
-    const [result, setResult] = useState<ScrapeResponse | null>(null);
+    const [result, setResult] = useState<ScrapeResponse | SearchResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [logs, setLogs] = useState<string[]>([]);
     const [elapsed, setElapsed] = useState(0);
@@ -171,8 +181,8 @@ export default function NexusDashboard() {
                         entityCount: Object.keys(e.data || {}).length,
                         totalItems: e.itemCount,
                         result: e.data?.structured_data
-                            ? { url: e.url, structured_data: (e.data as any).structured_data, raw_markdown: "" }
-                            : { url: e.url, structured_data: { page_summary: "", media: [], external_links: [], data_tables: [] }, raw_markdown: "" },
+                            ? { url: e.url, page_type: "GENERAL", structured_data: (e.data as any).structured_data, raw_markdown: "" }
+                            : { url: e.url, page_type: "GENERAL", structured_data: { page_summary: "", media: [], external_links: [], data_tables: [] }, raw_markdown: "" },
                     })));
                 } else {
                     const saved = localStorage.getItem(HISTORY_KEY);
@@ -199,28 +209,36 @@ export default function NexusDashboard() {
         setLogs((prev) => [...prev.slice(-5), msg]);
     }, []);
 
-    const handleScrape = async () => {
-        if (!url.trim()) return;
+    const handleExtract = async () => {
+        const inputStr = mode === "scrape" ? url : searchQuery;
+        if (!inputStr.trim()) return;
 
-        // ── Security: URL Validation ─────────────────────────────
-        const trimmed = url.trim();
-        try {
-            const parsed = new URL(trimmed);
-            if (!["http:", "https:"].includes(parsed.protocol)) {
-                setError("Only http:// and https:// URLs are allowed.");
+        if (mode === "scrape") {
+            // ── Security: URL Validation ─────────────────────────────
+            const trimmed = inputStr.trim();
+            try {
+                const parsed = new URL(trimmed);
+                if (!["http:", "https:"].includes(parsed.protocol)) {
+                    setError("Only http:// and https:// URLs are allowed.");
+                    return;
+                }
+                // Block internal/private addresses (SSRF protection)
+                const host = parsed.hostname.toLowerCase();
+                if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" ||
+                    host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.") ||
+                    host.endsWith(".local") || host.endsWith(".internal")) {
+                    setError("Internal/private network URLs are not allowed for security reasons.");
+                    return;
+                }
+            } catch {
+                setError("Please enter a valid URL (e.g. https://example.com)");
                 return;
             }
-            // Block internal/private addresses (SSRF protection)
-            const host = parsed.hostname.toLowerCase();
-            if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" ||
-                host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.") ||
-                host.endsWith(".local") || host.endsWith(".internal")) {
-                setError("Internal/private network URLs are not allowed for security reasons.");
+        } else {
+            if (inputStr.trim().length < 3) {
+                setError("Please enter a longer search query.");
                 return;
             }
-        } catch {
-            setError("Please enter a valid URL (e.g. https://example.com)");
-            return;
         }
 
         // ── Daily Scrape Limit ────────────────────────────────────
@@ -248,6 +266,7 @@ export default function NexusDashboard() {
         if (!geminiKey.trim()) {
             setError("Please enter your Gemini API key first. Click the ⚙ API Key button above to add it.");
             setShowSettings(true);  // Auto-expand the settings panel
+
             return;
         }
 
@@ -263,16 +282,16 @@ export default function NexusDashboard() {
         timerRef.current = setInterval(() => setElapsed((p) => p + 1), 1000);
 
         try {
-            addLog("Sending URL to DOM Parser for Markdown extraction...");
-
             const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-            const res = await fetch(`${API_URL}/scrape-and-structure`, {
+            const endpoint = mode === "scrape" ? "/scrape-and-structure" : "/search-and-structure";
+            const payload = mode === "scrape" 
+                 ? { url: inputStr.trim(), user_gemini_key: geminiKey }
+                 : { query: inputStr.trim(), user_gemini_key: geminiKey };
+
+            const res = await fetch(`${API_URL}${endpoint}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    url: url.trim(),
-                    user_gemini_key: geminiKey,
-                }),
+                body: JSON.stringify(payload),
             });
 
             if (!res.ok) {
@@ -280,13 +299,13 @@ export default function NexusDashboard() {
                 if (res.status === 401) {
                     throw new Error(errData.detail || "Invalid Gemini API key. Please check your key and try again.");
                 } else if (res.status === 404) {
-                    throw new Error(errData.detail || "The target webpage could not be found (404). Please check the URL.");
+                    throw new Error(errData.detail || "The target webpage could not be found (404). Please check the URL/query.");
                 }
                 throw new Error(errData.detail || `Server error: ${res.status}`);
             }
 
             addLog("Extraction complete. Gemini is structuring data...");
-            const json: ScrapeResponse = await res.json();
+            const json: ScrapeResponse | SearchResponse = await res.json();
             if (timerRef.current) clearInterval(timerRef.current);
             setLoading(false);
             setResult(json);
@@ -298,9 +317,10 @@ export default function NexusDashboard() {
             const totalItems = sd.data_tables?.reduce((sum, t) => sum + (t.rows?.length || 0), 0) || 0;
 
             // Save to history
+            const displayUrl = mode === "scrape" ? inputStr.trim() : `🔍 ${inputStr.trim()}`;
             const entry: HistoryEntry = {
                 id: Date.now().toString(),
-                url: url.trim(),
+                url: displayUrl,
                 timestamp: new Date().toLocaleString(),
                 entityCount: tableCount,
                 totalItems: totalItems + (sd.media?.length || 0) + (sd.external_links?.length || 0),
@@ -322,7 +342,7 @@ export default function NexusDashboard() {
                     timestamp: e.timestamp,
                     entityCount: Object.keys(e.data || {}).length,
                     totalItems: e.itemCount,
-                    result: e.data?.structured_data ? { url: e.url, structured_data: (e.data as any).structured_data, raw_markdown: "" } : { url: e.url, structured_data: { page_summary: "", media: [], external_links: [], data_tables: [] }, raw_markdown: "" },
+                    result: e.data?.structured_data ? { url: e.url, page_type: "GENERAL", structured_data: (e.data as any).structured_data, raw_markdown: "" } : { url: e.url, page_type: "GENERAL", structured_data: { page_summary: "", media: [], external_links: [], data_tables: [] }, raw_markdown: "" },
                 })));
             } else {
                 const updated = [...history, entry].slice(-MAX_HISTORY);
@@ -351,7 +371,13 @@ export default function NexusDashboard() {
     };
 
     const loadFromHistory = (entry: HistoryEntry) => {
-        setUrl(entry.url);
+        if (entry.url.startsWith("🔍 ")) {
+            setMode("search");
+            setSearchQuery(entry.url.slice(2));
+        } else {
+            setMode("scrape");
+            setUrl(entry.url);
+        }
         setResult(entry.result);
         setError(null);
         setLogs([`Loaded from history: ${entry.url}`]);
@@ -368,8 +394,8 @@ export default function NexusDashboard() {
                 entityCount: Object.keys(e.data || {}).length,
                 totalItems: e.itemCount,
                 result: e.data?.structured_data
-                    ? { url: e.url, structured_data: (e.data as any).structured_data, raw_markdown: "" }
-                    : { url: e.url, structured_data: { page_summary: "", media: [], external_links: [], data_tables: [] }, raw_markdown: "" },
+                    ? { url: e.url, page_type: "GENERAL", structured_data: (e.data as any).structured_data, raw_markdown: "" }
+                    : { url: e.url, page_type: "GENERAL", structured_data: { page_summary: "", media: [], external_links: [], data_tables: [] }, raw_markdown: "" },
             })));
         } else {
             const updated = history.filter((h) => h.id !== id);
@@ -675,27 +701,70 @@ export default function NexusDashboard() {
                                 </AnimatePresence>
                             </div>
 
-                            {/* URL Input */}
-                            <div className="relative group">
-                                <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
-                                    <Search className="h-6 w-6 text-gray-600 group-focus-within:text-emerald-400 transition-colors duration-300" />
+                            {/* Input Area */}
+                            <div className="space-y-4">
+                                {/* Mode Toggle */}
+                                <div className="flex space-x-2">
+                                    <button
+                                        onClick={() => setMode("scrape")}
+                                        className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center space-x-2 border ${
+                                            mode === "scrape" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]" : "bg-white/[0.03] text-gray-400 border-transparent hover:bg-white/[0.06] hover:text-gray-300"
+                                        }`}
+                                    >
+                                        <Globe size={16} />
+                                        <span>Scrape URL</span>
+                                    </button>
+                                    <button
+                                        onClick={() => setMode("search")}
+                                        className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center space-x-2 border ${
+                                            mode === "search" ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "bg-white/[0.03] text-gray-400 border-transparent hover:bg-white/[0.06] hover:text-gray-300"
+                                        }`}
+                                    >
+                                        <Search size={16} />
+                                        <span>Web Search</span>
+                                    </button>
                                 </div>
-                                <input
-                                    type="text"
-                                    value={url}
-                                    onChange={(e) => setUrl(e.target.value)}
-                                    onKeyDown={(e) => e.key === "Enter" && !loading && handleScrape()}
-                                    placeholder="https://example.com"
-                                    className="w-full bg-white/[0.03] border border-white/[0.08] rounded-2xl py-5 pl-14 pr-48 text-white font-mono text-base focus:outline-none focus:border-emerald-500/40 focus:bg-white/[0.05] focus:shadow-[0_0_30px_rgba(16,185,129,0.08)] transition-all duration-300 placeholder:text-gray-700"
-                                />
-                                <button
-                                    onClick={handleScrape}
-                                    disabled={loading || !url.trim()}
-                                    className="absolute right-2.5 top-2.5 bottom-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 disabled:from-gray-700 disabled:to-gray-700 disabled:opacity-40 text-white px-10 rounded-xl font-bold text-base tracking-wide transition-all duration-200 flex items-center space-x-2.5 shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/50 hover:scale-[1.02] active:scale-[0.98]"
-                                >
-                                    {loading ? <Loader2 size={18} className="animate-spin" /> : <ArrowRight size={18} />}
-                                    <span>{loading ? "Extracting..." : "Extract"}</span>
-                                </button>
+
+                                <div className="relative group">
+                                    <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
+                                        {mode === "scrape" ? (
+                                            <Globe className="h-6 w-6 text-gray-600 group-focus-within:text-emerald-400 transition-colors duration-300" />
+                                        ) : (
+                                            <Search className="h-6 w-6 text-gray-600 group-focus-within:text-cyan-400 transition-colors duration-300" />
+                                        )}
+                                    </div>
+                                    {mode === "scrape" ? (
+                                        <input
+                                            type="text"
+                                            value={url}
+                                            onChange={(e) => setUrl(e.target.value)}
+                                            onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
+                                            placeholder="https://example.com"
+                                            className="w-full bg-white/[0.03] border border-white/[0.08] rounded-2xl py-5 pl-14 pr-48 text-white font-mono text-base focus:outline-none focus:border-emerald-500/40 focus:bg-white/[0.05] focus:shadow-[0_0_30px_rgba(16,185,129,0.08)] transition-all duration-300 placeholder:text-gray-700"
+                                        />
+                                    ) : (
+                                        <input
+                                            type="text"
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
+                                            placeholder="Search for anything (e.g. 'latest AI news')"
+                                            className="w-full bg-white/[0.03] border border-white/[0.08] rounded-2xl py-5 pl-14 pr-48 text-white font-mono text-base focus:outline-none focus:border-cyan-500/40 focus:bg-white/[0.05] focus:shadow-[0_0_30px_rgba(6,182,212,0.08)] transition-all duration-300 placeholder:text-gray-700"
+                                        />
+                                    )}
+                                    <button
+                                        onClick={handleExtract}
+                                        disabled={loading || (mode === "scrape" ? !url.trim() : !searchQuery.trim())}
+                                        className={`absolute right-2.5 top-2.5 bottom-2.5 px-10 rounded-xl font-bold text-base tracking-wide transition-all duration-200 flex items-center space-x-2.5 text-white shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/50 hover:scale-[1.02] active:scale-[0.98] ${
+                                            mode === "scrape" 
+                                                ? "bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 border border-emerald-500/30" 
+                                                : "bg-gradient-to-r from-cyan-600 to-blue-500 hover:from-cyan-500 hover:to-blue-400 border border-cyan-500/30"
+                                        } disabled:from-gray-700 disabled:to-gray-700 disabled:opacity-40 disabled:border-transparent`}
+                                    >
+                                        {loading ? <Loader2 size={18} className="animate-spin" /> : <ArrowRight size={18} />}
+                                        <span>{loading ? "Extracting..." : "Extract"}</span>
+                                    </button>
+                                </div>
                             </div>
 
 
