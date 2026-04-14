@@ -492,7 +492,7 @@ async def classify_page(markdown: str, user_key: str) -> str:
 
 # ──────────────────────────── Pass 2: Extractor ────────────────────
 
-def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", model: str = "gemini-2.5-flash") -> str:
+def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL") -> str:
     """
     Main extraction call — runs in a thread executor.
     Uses genai.Client (instance-scoped, thread-safe, no global configure() race).
@@ -509,7 +509,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
     prompt = f"{GEMINI_SYSTEM_PROMPT}{extra}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
 
     response = client.models.generate_content(
-        model=model,
+        model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
@@ -530,19 +530,16 @@ async def structure_with_gemini(
     error_message is None on success, or a human-readable reason on failure.
     JSON parsing wrapped in try/except with partial-JSON recovery.
     """
-    max_retries = 3
-    base_delay = 2
+    max_retries = 4
+    base_delay = 3
     last_error_msg: str | None = None
     raw_text: str = ""
 
     for attempt in range(1, max_retries + 1):
         try:
-            # Graceful model fallback on final attempt if API is experiencing high demand
-            model_to_use = "gemini-2.5-flash" if attempt < 3 else "gemini-1.5-flash"
-            
             loop = asyncio.get_event_loop()
             raw_text = await loop.run_in_executor(
-                _thread_pool, _call_gemini_sync, markdown, user_key, page_type, model_to_use
+                _thread_pool, _call_gemini_sync, markdown, user_key, page_type
             )
 
             # Strip accidental markdown fences
@@ -591,9 +588,9 @@ async def structure_with_gemini(
             if any(k in error_lower for k in ("api key", "api_key", "authenticate", "permission denied", "invalid")):
                 return None, f"Invalid or missing Gemini API key. Please update your key in settings. ({exc})"
 
-            # Region/access errors
-            if "user location" in error_lower or "not supported" in error_lower:
-                return None, f"Gemini not available in your region or for this key tier. ({exc})"
+            # Region/access/model errors
+            if any(k in error_lower for k in ("user location", "not supported", "not found")):
+                return None, f"Model not supported for this API key tier/region. Updates to the API key may be required. ({exc})"
 
             # Transient errors — retry with backoff
             is_transient = any(k in error_lower for k in (
