@@ -450,6 +450,14 @@ Return ONLY valid JSON with a single field "page_type".
 Page preview (first 5,000 characters):
 """
 
+_UNIVERSAL_CAP = (
+    "\n\nCRITICAL TRUNCATION PREVENTER: You are generating a structured JSON object. "
+    "To prevent output truncation and reaching token limits, you MUST STRICTLY LIMIT the number of items extracted per array. "
+    "Extract a MAXIMUM of 15 items per array (rows, links, paragraphs, media, external_links). "
+    "Do NOT extract more than 15 items for ANY array, and limit data_tables to a maximum of 5 tables. "
+    "Keep descriptions short and concise. Your output must natively finish and close all JSON brackets."
+)
+
 
 # ──────────────────────────── Pass 1: Classifier ───────────────────
 
@@ -508,8 +516,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
         prompt = f"{SEARCH_SYSTEM_PROMPT}\n\nExtract ALL data from these search results:\n\n{truncated}"
         schema = SearchStructuredResponse
     else:
-        extra = _DIRECTORY_CAP if page_type == "DIRECTORY_OR_LIST" else ""
-        prompt = f"{GEMINI_SYSTEM_PROMPT}{extra}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
+        prompt = f"{GEMINI_SYSTEM_PROMPT}{_UNIVERSAL_CAP}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
         schema = StructuredResult
 
     response = client.models.generate_content(
@@ -558,30 +565,29 @@ async def structure_with_gemini(
 
         except json.JSONDecodeError as exc:
             logger.warning(f"Gemini JSON parse failed (attempt {attempt}): {exc}")
-            # --- Graceful partial-JSON recovery ---
-            # Try to salvage a complete top-level object from truncated output
-            try:
-                # Find the outermost { ... } block
-                match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-                if match:
-                    candidate = match.group(0)
+            
+            # --- Robust Brute-Force Partial JSON Recovery ---
+            text_fix = cleaned
+            if "Unterminated string" in str(exc) or "Expecting ',' delimiter" in str(exc) or "Expecting value" in str(exc):
+                text_fix += '"'  # Add a quote in case we are cut off inside a string
+                
+            for _ in range(400): # Backtrack up to 400 chars
+                try:
+                    # Auto-close brackets
+                    ob = text_fix.count('{') - text_fix.count('}')
+                    ok = text_fix.count('[') - text_fix.count(']')
+                    candidate = text_fix + (']' * max(0, ok)) + ('}' * max(0, ob))
                     result = json.loads(candidate)
-                    logger.info("Partial JSON recovery succeeded")
+                    logger.info(f"Brute-force JSON recovery succeeded after backtracking {len(cleaned) - len(text_fix)} chars")
                     return result, None
-            except Exception:
-                pass
-            # If recovery failed, truncate arrays that may have broken JSON
-            try:
-                # Remove trailing incomplete array/object by cutting at last full value
-                truncated_attempt = re.sub(r',\s*"[^"]*"\s*:\s*\[.*$', '', raw_text, flags=re.DOTALL)
-                truncated_attempt = truncated_attempt.rstrip(", \n\r\t") + "}"
-                result = json.loads(truncated_attempt)
-                logger.info("Truncated JSON recovery succeeded")
-                return result, None
-            except Exception:
-                pass
+                except json.JSONDecodeError:
+                    if len(text_fix) > 10:
+                        text_fix = text_fix[:-1] # chop one char and try again
+                    else:
+                        break
+                        
             last_error_msg = f"Gemini returned malformed JSON: {exc}"
-            break  # No point retrying bad JSON
+            break  # No point retrying completely bad JSON
 
         except Exception as exc:
             last_error_msg = str(exc)
