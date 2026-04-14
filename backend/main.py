@@ -333,10 +333,9 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
 
 # ──────────────────────────── Firecrawl Search ─────────────────────
 
-async def search_via_firecrawl(query: str) -> tuple[list[str], list[str]]:
+async def search_via_firecrawl(query: str) -> list[dict]:
     """
-    Search using Firecrawl /v1/search. Returns (markdowns_list, source_urls_list).
-    Pulls top 3 results and returns their markdown content.
+    Search using Firecrawl /v1/search. Returns the raw results list from Firecrawl.
     """
     if not FIRECRAWL_API_KEY:
         raise HTTPException(status_code=500, detail="Server misconfiguration: FIRECRAWL_API_KEY is not set.")
@@ -373,21 +372,10 @@ async def search_via_firecrawl(query: str) -> tuple[list[str], list[str]]:
         raise HTTPException(status_code=502, detail=f"Firecrawl search returned success=false: {data.get('error', '')}")
 
     results = data.get("data", [])
-    markdowns: list[str] = []
-    sources: list[str] = []
+    if not results:
+        raise HTTPException(status_code=422, detail=f"Firecrawl search returned no results for: '{query}'")
 
-    for result in results[:3]:
-        md = result.get("markdown", "").strip()
-        url = result.get("url") or result.get("metadata", {}).get("sourceURL", "")
-        if md:
-            markdowns.append(md)
-        if url:
-            sources.append(url)
-
-    if not markdowns:
-        raise HTTPException(status_code=422, detail=f"Firecrawl search returned no readable content for: '{query}'")
-
-    return markdowns, sources
+    return results
 
 
 # ──────────────────────────── Gemini System Prompt ─────────────────
@@ -839,45 +827,51 @@ async def scrape_and_structure(payload: ScrapeRequest):
 @app.post("/search-and-structure", response_model=SearchResponse)
 async def search_and_structure(payload: SearchRequest):
     """
-    Search pipeline:
-    1. Rate-limit check (10/day per Gemini key)
-    2. Firecrawl search: query → top 3 result markdowns
-    3. Concatenate markdowns
-    4. Pass 1: Classify combined markdown
-    5. Pass 2: Gemini extraction
-    6. Fallback regex parser if Gemini fails
+    Search pipeline (GEMINI BYPASSED):
+    1. Firecrawl search: query → raw organic search items
+    2. Map metadata (title, description, ogImage) into SearchStructuredResponse natively.
     """
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="Search query cannot be empty.")
 
-    check_rate_limit(payload.user_gemini_key)
-    logger.info(f"[v8] search-and-structure: '{query}'")
+    logger.info(f"[v8] search-and-structure: '{query}' (Gemini bypassed)")
 
-    # Step 1: Search
-    markdowns, sources = await search_via_firecrawl(query)
-    logger.info(f"Firecrawl search: {len(markdowns)} results for '{query}'")
+    # Step 1: Search via Firecrawl
+    results = await search_via_firecrawl(query)
+    logger.info(f"Firecrawl search: {len(results)} results for '{query}'")
 
-    # Step 2: Combine results with source attribution headers
-    combined_parts = []
-    for i, (md, src) in enumerate(zip(markdowns, sources), 1):
-        combined_parts.append(f"## Source {i}: {src}\n\n{md}")
-    combined_markdown = "\n\n---\n\n".join(combined_parts)
+    # Step 2: Extract attributes directly into SearchResultItem without Gemini
+    search_items = []
+    sources = []
+    
+    for result in results:
+        meta = result.get("metadata", {})
+        title = meta.get("title") or "Untitled Result"
+        description = meta.get("description") or result.get("markdown", "")[:200].strip() + "..."
+        url = result.get("url") or meta.get("sourceURL", "")
+        image = meta.get("ogImage")
+        
+        if url and (url not in sources):
+            sources.append(url)
+            search_items.append(SearchResultItem(
+                title=title,
+                description=description,
+                price=None,
+                image_url=image,
+                source_url=url
+            ))
 
-    # Step 3: Classify
-    page_type = await classify_page(combined_markdown, payload.user_gemini_key)
-
-    # Step 4: Extract
-    structured, gemini_error = await structure_with_gemini(combined_markdown, payload.user_gemini_key, page_type, is_search=True)
-
-    if structured is None:
-        logger.warning(f"Gemini unavailable ({gemini_error}) — using fallback parser")
-        structured = {"search_summary": gemini_error or "Failed via Gemini", "results": []}
+    structured = SearchStructuredResponse(
+        search_summary="Rich search items directly extracted from organic metadata via Firecrawl web index.",
+        results=search_items[:10]  # Cap visual results safely
+    )
 
     return SearchResponse(
         query=query,
         sources=sources,
-        page_type=page_type,
+        page_type="GENERAL",
         structured_data=structured,
-        combined_markdown=combined_markdown,
+        combined_markdown="Gemini AI bypassed to prevent throttle errors. Raw metadata successfully loaded."
     )
+
