@@ -19,10 +19,15 @@ import {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface MediaItem { url: string; type?: string; alt?: string; }
+interface LinkItem { text: string; url: string; }
 interface DataTable { title?: string; headers: string[]; rows: string[][]; }
 interface StructuredData {
+    page_title: string;
     page_summary: string;
+    headings: string[];
+    paragraphs: string[];
     media: MediaItem[];
+    links: LinkItem[];
     external_links: string[];
     data_tables: DataTable[];
 }
@@ -917,6 +922,89 @@ export default function NexusDashboard() {
                                                         </a>
                                                     ))}
                                                 </div>
+                                            </div>
+                                        </motion.div>
+                                        )}
+
+                                    {/* Named Links (text + URL) */}
+                                    {result.structured_data.links?.length > 0 && (
+                                        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+                                            <div className="flex items-center space-x-2.5 mb-3">
+                                                <ExternalLink className="text-emerald-400" size={15} />
+                                                <h2 className="text-sm font-bold text-white tracking-wide">Page Links</h2>
+                                                <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                    {result.structured_data.links.length}
+                                                </span>
+                                            </div>
+                                            <div className="glass-card rounded-xl overflow-hidden">
+                                                <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                                                    <table className="nexus-table w-full text-left">
+                                                        <thead>
+                                                            <tr>
+                                                                <th className="w-10 text-center">#</th>
+                                                                <th>Link Text</th>
+                                                                <th>URL</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {result.structured_data.links.map((link, i) => (
+                                                                <tr key={i}>
+                                                                    <td className="text-center text-gray-700 text-xs">{i + 1}</td>
+                                                                    <td className="text-gray-300 text-xs">{link.text}</td>
+                                                                    <td>
+                                                                        <a href={link.url} target="_blank" rel="noopener noreferrer"
+                                                                            className="text-cyan-400/80 hover:text-cyan-300 text-xs truncate block max-w-xs transition-colors">
+                                                                            {link.url.length > 50 ? link.url.slice(0, 47) + '…' : link.url}
+                                                                        </a>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    )}
+
+                                    {/* Page Headings */}
+                                    {result.structured_data.headings?.length > 0 && (
+                                        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+                                            <div className="flex items-center space-x-2.5 mb-3">
+                                                <Database className="text-violet-400" size={15} />
+                                                <h2 className="text-sm font-bold text-white tracking-wide">Page Headings</h2>
+                                                <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                    {result.structured_data.headings.length}
+                                                </span>
+                                            </div>
+                                            <div className="glass-card rounded-xl p-4">
+                                                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                                    {result.structured_data.headings.map((h, i) => (
+                                                        <p key={i} className="text-gray-300 text-xs py-1 border-b border-white/[0.04] last:border-0">
+                                                            <span className="text-violet-400/60 mr-2 font-mono text-[10px]">H{i === 0 ? '1' : '2+'}</span>
+                                                            {h}
+                                                        </p>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    )}
+
+                                    {/* Paragraphs / Body Text */}
+                                    {result.structured_data.paragraphs?.length > 0 && (
+                                        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+                                            <div className="flex items-center space-x-2.5 mb-3">
+                                                <Zap className="text-amber-400" size={15} />
+                                                <h2 className="text-sm font-bold text-white tracking-wide">Body Text</h2>
+                                                <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                    {result.structured_data.paragraphs.length} paragraphs
+                                                </span>
+                                            </div>
+                                            <div className="glass-card rounded-xl p-4 space-y-3 max-h-96 overflow-y-auto">
+                                                {result.structured_data.paragraphs.map((para, i) => (
+                                                    <p key={i} className="text-gray-400 text-xs leading-relaxed border-l-2 border-white/[0.06] pl-3 hover:border-emerald-500/30 transition-colors">
+                                                        {para}
+                                                    </p>
+                                                ))}
                                             </div>
                                         </motion.div>
                                     )}
