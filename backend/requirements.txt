@@ -4,3 +4,5 @@ httpx
 google-generativeai
 pydantic
 python-dotenv
+firecrawl-py
+tenacity
