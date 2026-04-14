@@ -513,6 +513,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL") 
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
+            response_schema=StructuredResult,
             temperature=0.1,
             max_output_tokens=8192,
         ),
