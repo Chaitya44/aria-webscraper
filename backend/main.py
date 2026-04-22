@@ -140,6 +140,7 @@ class ScrapeResponse(BaseModel):
     page_type: str = "GENERAL"
     structured_data: StructuredResult
     raw_markdown: str
+    extraction_warning: str | None = None
 
 
 class SearchResultItem(BaseModel):
@@ -502,13 +503,27 @@ def _classify_page_sync(preview: str, user_key: str) -> str:
         return "GENERAL"
 
 
+_classifier_cache: dict[str, str] = {}
+
 async def classify_page(markdown: str, user_key: str) -> str:
     """Async wrapper for the classifier. Defaults to GENERAL on any failure."""
     preview = _pre_clean_markdown(markdown)[:5000]
+    
+    preview_hash = hashlib.sha256(preview.encode('utf-8')).hexdigest()
+    if preview_hash in _classifier_cache:
+        logger.info(f"Classifier cache hit for {preview_hash[:8]}...")
+        return _classifier_cache[preview_hash]
+
     loop = asyncio.get_event_loop()
     try:
         page_type = await loop.run_in_executor(_thread_pool, _classify_page_sync, preview, user_key)
         logger.info(f"Page classified as: {page_type}")
+        
+        _classifier_cache[preview_hash] = page_type
+        if len(_classifier_cache) > 100:
+            oldest_key = next(iter(_classifier_cache))
+            del _classifier_cache[oldest_key]
+            
         return page_type
     except Exception as exc:
         logger.warning(f"Classifier failed ({exc}) — defaulting to GENERAL")
@@ -622,29 +637,24 @@ async def structure_with_gemini(
             
             text_fix = cleaned
             
-            # --- Better MAX_TOKENS handling ---
-            # Try finding the last complete object in a list
-            last_complete_idx = text_fix.rfind('},')
-            if last_complete_idx > -1:
-                candidate = text_fix[:last_complete_idx + 1] + ']}'
-                try:
-                    result = json.loads(candidate)
-                    recovered_items = len(result.get('results', [])) if is_search else len(result.get('items', []))
-                    logger.info(f"Recovered {recovered_items} items by truncating to last complete object (MAX_TOKENS behavior)")
-                    return result, None
-                except json.JSONDecodeError:
-                    pass
-
-            # --- Robust Brute-Force Partial JSON Recovery ---
             if "Unterminated string" in str(exc) or "Expecting ',' delimiter" in str(exc) or "Expecting value" in str(exc):
                 text_fix += '"'  # Add a quote in case we are cut off inside a string
                 
+            stripped = text_fix.lstrip()
+            
             for _ in range(400): # Backtrack up to 400 chars
                 try:
-                    # Auto-close brackets
-                    ob = text_fix.count('{') - text_fix.count('}')
-                    ok = text_fix.count('[') - text_fix.count(']')
-                    candidate = text_fix + (']' * max(0, ok)) + ('}' * max(0, ob))
+                    if stripped.startswith('{'):
+                        ob = text_fix.count('{') - text_fix.count('}')
+                        ok = text_fix.count('[') - text_fix.count(']')
+                        candidate = text_fix + (']' * max(0, ok)) + ('}' * max(0, ob))
+                    elif stripped.startswith('['):
+                        ok = text_fix.count('[') - text_fix.count(']')
+                        ob = text_fix.count('{') - text_fix.count('}')
+                        candidate = text_fix + ('}' * max(0, ob)) + (']' * max(0, ok))
+                    else:
+                        candidate = text_fix
+
                     result = json.loads(candidate)
                     logger.info(f"Brute-force JSON recovery succeeded after backtracking {len(cleaned) - len(text_fix)} chars")
                     return result, None
@@ -869,6 +879,21 @@ async def health():
     }
 
 
+@app.get("/usage")
+async def get_usage(gemini_key: str):
+    today = str(date.today())
+    kid = _key_id(gemini_key)
+    entry = usage_tracker.get(kid)
+    if not entry or entry["date"] != today:
+        return {"used": 0, "limit": DAILY_LIMIT, "remaining": DAILY_LIMIT}
+    used = entry["count"]
+    return {
+        "used": used,
+        "limit": DAILY_LIMIT,
+        "remaining": max(0, DAILY_LIMIT - used)
+    }
+
+
 @app.post("/scrape-and-structure", response_model=ScrapeResponse)
 async def scrape_and_structure(payload: ScrapeRequest):
     """
@@ -896,12 +921,16 @@ async def scrape_and_structure(payload: ScrapeRequest):
     if structured is None:
         logger.warning(f"Gemini unavailable ({gemini_error}) — using fallback parser")
         structured = fallback_structure_from_markdown(raw_markdown, error_msg=gemini_error)
+        extraction_warning = "AI extraction unavailable — basic parsing used. Results may be incomplete."
+    else:
+        extraction_warning = None
 
     return ScrapeResponse(
         url=url,
         page_type=page_type,
         structured_data=_build_structured_result(structured, firecrawl_links),
         raw_markdown=raw_markdown,
+        extraction_warning=extraction_warning,
     )
 
 
@@ -915,6 +944,8 @@ async def search_and_structure(payload: SearchRequest):
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="Search query cannot be empty.")
+
+    check_rate_limit(payload.user_gemini_key)
 
     logger.info(f"[v8] search-and-structure: '{query}' (Gemini bypassed)")
 
