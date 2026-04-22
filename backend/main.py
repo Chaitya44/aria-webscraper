@@ -526,18 +526,20 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
     client = genai.Client(api_key=user_key)
 
     cleaned = _pre_clean_markdown(markdown)
-    # Hard limit: after heavy stripping, target 15,000 chars for Gemini
-    truncated = _smart_truncate(cleaned, max_chars=15_000)
+    # Hard limit: after heavy stripping, target 10,000 chars for Gemini
+    truncated = _smart_truncate(cleaned, max_chars=10_000)
 
     before_len = len(markdown)
     after_len = len(truncated)
     logger.info(f"[{page_type}] Cleaned {before_len} → {after_len} chars before sending to Gemini ({model})")
 
+    constraint_prompt = "Return a maximum of 20 items. Be concise with field values. Do not include raw HTML in any field. Keep all string values under 200 characters. Your entire response must be valid complete JSON — never truncate mid-response."
+
     if is_search:
-        prompt = f"{SEARCH_SYSTEM_PROMPT}\n\nExtract ALL data from these search results:\n\n{truncated}"
+        prompt = f"{SEARCH_SYSTEM_PROMPT}\n\nExtract ALL data from these search results:\n\n{truncated}\n\n{constraint_prompt}"
         schema = SearchStructuredResponse
     else:
-        prompt = f"{GEMINI_SYSTEM_PROMPT}{_UNIVERSAL_CAP}\n\nExtract ALL data from this web page markdown:\n\n{truncated}"
+        prompt = f"{GEMINI_SYSTEM_PROMPT}{_UNIVERSAL_CAP}\n\nExtract ALL data from this web page markdown:\n\n{truncated}\n\n{constraint_prompt}"
         schema = StructuredResult
 
     response = client.models.generate_content(
@@ -547,7 +549,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
             response_mime_type="application/json",
             response_schema=schema,
             temperature=0.1,
-            max_output_tokens=8192,
+            max_output_tokens=16000,
         ),
     )
 
@@ -618,8 +620,22 @@ async def structure_with_gemini(
         except json.JSONDecodeError as exc:
             logger.warning(f"Gemini JSON parse failed (attempt {attempt}): {exc}")
             
-            # --- Robust Brute-Force Partial JSON Recovery ---
             text_fix = cleaned
+            
+            # --- Better MAX_TOKENS handling ---
+            # Try finding the last complete object in a list
+            last_complete_idx = text_fix.rfind('},')
+            if last_complete_idx > -1:
+                candidate = text_fix[:last_complete_idx + 1] + ']}'
+                try:
+                    result = json.loads(candidate)
+                    recovered_items = len(result.get('results', [])) if is_search else len(result.get('items', []))
+                    logger.info(f"Recovered {recovered_items} items by truncating to last complete object (MAX_TOKENS behavior)")
+                    return result, None
+                except json.JSONDecodeError:
+                    pass
+
+            # --- Robust Brute-Force Partial JSON Recovery ---
             if "Unterminated string" in str(exc) or "Expecting ',' delimiter" in str(exc) or "Expecting value" in str(exc):
                 text_fix += '"'  # Add a quote in case we are cut off inside a string
                 
@@ -663,6 +679,9 @@ async def structure_with_gemini(
                 "503", "unavailable", "429", "resource", "overloaded", "quota", "exhausted"
             ))
             if is_transient and attempt < max_retries:
+                if "503" in error_lower and current_model == "gemini-2.5-flash":
+                    logger.warning("Falling back to gemini-1.5-flash due to 503")
+                    current_model = "gemini-1.5-flash"
                 delay = base_delay * (2 ** (attempt - 1))
                 logger.warning(f"Transient error — retrying in {delay}s (attempt {attempt+1}/{max_retries})...")
                 await asyncio.sleep(delay)
