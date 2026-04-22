@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Sun, Moon, User, Sparkles, LogOut, Settings, ChevronDown } from "lucide-react";
@@ -14,6 +15,11 @@ export default function Header() {
     const [showMenu, setShowMenu] = useState(false);
     const [isLocked, setIsLocked] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
+    const buttonRef = useRef<HTMLButtonElement>(null);
+    const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0 });
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => { setMounted(true); }, []);
 
     useEffect(() => {
         const saved = localStorage.getItem("aria_theme") as "dark" | "light" | null;
@@ -25,7 +31,13 @@ export default function Header() {
 
     useEffect(() => {
         const handleClick = (e: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+            // Close if click is outside both the button and the dropdown portal
+            const target = e.target as Node;
+            const dropdownEl = document.getElementById('aria-user-dropdown');
+            if (
+                menuRef.current && !menuRef.current.contains(target) &&
+                (!dropdownEl || !dropdownEl.contains(target))
+            ) {
                 setShowMenu(false);
             }
         };
@@ -108,7 +120,17 @@ export default function Header() {
                     {user ? (
                         <div className="relative user-menu-wrapper" ref={menuRef}>
                             <button
-                                onClick={() => setShowMenu(!showMenu)}
+                                ref={buttonRef}
+                                onClick={() => {
+                                    if (!showMenu && buttonRef.current) {
+                                        const rect = buttonRef.current.getBoundingClientRect();
+                                        setDropdownPos({
+                                            top: rect.bottom + 8,
+                                            right: window.innerWidth - rect.right,
+                                        });
+                                    }
+                                    setShowMenu(v => !v);
+                                }}
                                 className="flex items-center space-x-2 pl-1 pr-2 py-1 rounded-xl border border-white/[0.06] hover:border-white/[0.12] bg-white/[0.03] hover:bg-white/[0.06] transition-all duration-200 user-pill"
                             >
                                 {user.photoURL ? (
@@ -131,14 +153,23 @@ export default function Header() {
                                 <ChevronDown size={13} className={`text-gray-500 transition-transform duration-200 ${showMenu ? "rotate-180" : ""}`} />
                             </button>
 
-                            <AnimatePresence>
-                                {showMenu && (
+                            {/* Portal dropdown — rendered at document.body level to escape ALL stacking contexts */}
+                            {mounted && showMenu && createPortal(
+                                <AnimatePresence>
                                     <motion.div
-                                        initial={{ opacity: 0, y: -8, scale: 0.95 }}
+                                        id="aria-user-dropdown"
+                                        initial={{ opacity: 0, y: -8, scale: 0.97 }}
                                         animate={{ opacity: 1, y: 0, scale: 1 }}
-                                        exit={{ opacity: 0, y: -8, scale: 0.95 }}
+                                        exit={{ opacity: 0, y: -8, scale: 0.97 }}
                                         transition={{ duration: 0.15 }}
-                                        className="absolute right-0 top-full mt-2 w-64 glass-card rounded-2xl border border-white/[0.08] p-2 shadow-2xl z-[9999] dropdown-card"
+                                        style={{
+                                            position: "fixed",
+                                            top: dropdownPos.top,
+                                            right: dropdownPos.right,
+                                            zIndex: 999999,
+                                            width: 256,
+                                        }}
+                                        className="glass-card rounded-2xl border border-white/[0.08] p-2 shadow-2xl dropdown-card"
                                     >
                                         {/* User info header */}
                                         <div className="flex items-center space-x-3 px-3 py-3 rounded-xl bg-white/[0.03]">
@@ -185,8 +216,9 @@ export default function Header() {
                                             <span>Sign out</span>
                                         </button>
                                     </motion.div>
-                                )}
-                            </AnimatePresence>
+                                </AnimatePresence>,
+                                document.body
+                            )}
                         </div>
                     ) : (
                         <Link

@@ -584,7 +584,7 @@ export default function NexusDashboard() {
             <div className="orb" style={{ width: 350, height: 350, bottom: -50, right: -50, background: "rgba(6, 182, 212, 0.4)", animationDelay: "-5s" }} />
             <div className="orb" style={{ width: 250, height: 250, top: "40%", right: "20%", background: "rgba(139, 92, 246, 0.3)", animationDelay: "-10s" }} />
 
-            <div className="relative z-10 flex min-h-[calc(100vh-4rem)]">
+            <div className="relative z-10 flex min-h-[calc(100vh-4rem)]" style={{ isolation: 'isolate' }}>
 
                 {/* ── HISTORY SIDEBAR (left) ──────────────────────── */}
                 {/* sticky so it stays fixed while main content scrolls */}
