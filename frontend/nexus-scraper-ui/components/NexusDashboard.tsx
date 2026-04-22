@@ -173,6 +173,9 @@ export default function NexusDashboard() {
     // isCancelled: true only BEFORE the Firecrawl API call is made
     const isCancelledRef = useRef(false);
     const [canCancel, setCanCancel] = useState(false); // show cancel button only pre-Firecrawl
+    const resultRef = useRef<HTMLDivElement>(null);
+    const errorRef = useRef<HTMLDivElement>(null);
+    const [resultKey, setResultKey] = useState(0); // increments on each new extraction result
 
     // Load history + API key on mount (and when user changes)
     useEffect(() => {
@@ -343,7 +346,10 @@ export default function NexusDashboard() {
             setLoading(false);
             setCanCancel(false);
             setResult(json);
+            setResultKey(k => k + 1); // trigger flash animation
             window.dispatchEvent(new CustomEvent('aria-scraping', { detail: { active: false } }));
+            // Auto-scroll to results
+            setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
 
             // Compute summary counts
             let tableCount = 0;
@@ -414,6 +420,8 @@ export default function NexusDashboard() {
             setError(e.message || "Connection failed");
             addLog(`Error: ${e.message}`);
             window.dispatchEvent(new CustomEvent('aria-scraping', { detail: { active: false } }));
+            // Auto-scroll to error
+            setTimeout(() => errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
         }
     };
 
@@ -579,7 +587,9 @@ export default function NexusDashboard() {
             <div className="relative z-10 flex min-h-[calc(100vh-4rem)]">
 
                 {/* ── HISTORY SIDEBAR (left) ──────────────────────── */}
-                <aside className="hidden lg:block w-72 flex-shrink-0 border-r border-white/[0.04] history-sidebar p-4 overflow-y-auto">
+                {/* sticky so it stays fixed while main content scrolls */}
+                <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 border-r border-white/[0.04] history-sidebar sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto">
+                    <div className="p-4 flex-1 overflow-y-auto">
                     <div className="flex items-center justify-between mb-4 px-1">
                         <div className="flex items-center space-x-2">
                             <Clock size={14} className="text-gray-500" />
@@ -614,9 +624,12 @@ export default function NexusDashboard() {
                                             <Globe size={12} className="text-emerald-500" />
                                         </div>
                                         <div className="min-w-0 flex-1">
-                                            <p className="text-white text-[11px] font-semibold truncate">{entry.url}</p>
+                                            <p className="text-white text-[11px] font-semibold truncate" title={entry.url}>{entry.url}</p>
                                             <p className="text-gray-600 text-[10px] mt-0.5">
-                                                {entry.entityCount} cat · {entry.totalItems} items · {new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {entry.totalItems > 0
+                                                    ? <><span className="text-emerald-500/80">{entry.totalItems} items</span> · <span>{new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></>
+                                                    : <><span className="text-gray-600">—</span> · <span>{new Date(entry.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></>
+                                                }
                                             </p>
                                         </div>
                                         <button
@@ -631,13 +644,15 @@ export default function NexusDashboard() {
                             ))}
                         </div>
                     )}
+                    </div>
                 </aside>
 
-                {/* ── MAIN CONTENT ────────────────────────────────── */}
-                <div className="flex-1 max-w-5xl mx-auto px-4 md:px-6 py-4 md:py-10">
+                {/* ── MAIN CONTENT — left-offset so sidebar never hides it ── */}
+                <div className="flex-1 min-w-0 px-4 md:px-8 py-6 md:py-10 overflow-x-hidden">
+                    <div className="max-w-4xl mx-auto">
 
                     {/* ── HERO ──────────────────────────────────────────── */}
-                    <motion.div initial={{ opacity: 0, y: -30 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-4 md:mb-10">
+                    <motion.div initial={{ opacity: 0, y: -30 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-8 md:mb-12">
                         <div className="flex justify-center mb-6">
                             <img src="/aria-logo.png" alt="Aria Intelligence Logo" className="h-16 md:h-24 object-contain brightness-110 drop-shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:drop-shadow-[0_0_30px_rgba(16,185,129,0.5)] transition-all duration-300" />
                         </div>
@@ -658,7 +673,7 @@ export default function NexusDashboard() {
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         transition={{ delay: 0.1 }}
-                        className="hidden md:flex items-center justify-center gap-8 mb-10"
+                        className="flex flex-wrap items-center justify-center gap-4 md:gap-8 mb-8 md:mb-10"
                     >
                         {FEATURES.map((f, i) => (
                             <motion.div
@@ -671,7 +686,7 @@ export default function NexusDashboard() {
                                 <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center feature-icon-glow group-hover:scale-110 transition-transform duration-200">
                                     <f.Illustration />
                                 </div>
-                                <span className="text-gray-400 text-xs font-semibold tracking-tight group-hover:text-white transition-colors">{f.title}</span>
+                                <span className="text-gray-400 text-xs font-semibold tracking-tight group-hover:text-white transition-colors whitespace-nowrap">{f.title}</span>
                             </motion.div>
                         ))}
                     </motion.div>
@@ -834,7 +849,7 @@ export default function NexusDashboard() {
                                         <div className="flex items-start mb-1">
                                             <span className="text-emerald-600 mr-2 flex-shrink-0">$</span>
                                             <span className="text-gray-600">Awaiting input...</span>
-                                            <span className="inline-block w-2 h-4 bg-emerald-500/60 ml-1 animate-pulse" />
+                                            <span className="terminal-cursor" />
                                         </div>
                                     )}
                                     {logs.map((log, i) => (
@@ -859,7 +874,7 @@ export default function NexusDashboard() {
                     {/* ── ERROR ────────────────────────────────────────── */}
                     <AnimatePresence>
                         {error && (
-                            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
+                            <motion.div ref={errorRef as any} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
                                 className="mt-6 p-4 bg-red-500/5 border border-red-500/15 rounded-xl flex items-start space-x-3">
                                 <AlertTriangle className="text-red-400 flex-shrink-0 mt-0.5" size={18} />
                                 <div>
@@ -936,7 +951,7 @@ export default function NexusDashboard() {
                     </AnimatePresence>
 
                     {/* ── RESULTS ──────────────────────────────────────── */}
-                    <div className="mt-8 space-y-6">
+                    <div key={resultKey} ref={resultRef} className={`mt-8 space-y-6 ${result ? 'results-flash' : ''}`}>
                         <AnimatePresence>
                             {result && typeof result.structured_data === 'object' && (
                                 <>
@@ -1250,6 +1265,7 @@ export default function NexusDashboard() {
                         </div>
                     </div>
 
+                    </div>{/* end max-w-4xl wrapper */}
                 </div>{/* end main content */}
             </div>{/* end flex */}
         </div>
