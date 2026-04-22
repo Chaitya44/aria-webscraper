@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
     Search, Download, AlertTriangle, Loader2,
     Database, Table2, Globe, Zap, Clock, Shield, Radar,
-    ArrowRight, Trash2, ExternalLink, Key, Eye, EyeOff, Settings
+    ArrowRight, Trash2, ExternalLink, Key, Eye, EyeOff, Settings, XCircle
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -170,6 +170,9 @@ export default function NexusDashboard() {
     const [showKey, setShowKey] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
+    // isCancelled: true only BEFORE the Firecrawl API call is made
+    const isCancelledRef = useRef(false);
+    const [canCancel, setCanCancel] = useState(false); // show cancel button only pre-Firecrawl
 
     // Load history + API key on mount (and when user changes)
     useEffect(() => {
@@ -219,6 +222,17 @@ export default function NexusDashboard() {
     const addLog = useCallback((msg: string) => {
         setLogs((prev) => [...prev.slice(-5), msg]);
     }, []);
+
+    const cancelExtraction = () => {
+        isCancelledRef.current = true;
+        setCanCancel(false);
+        setLoading(false);
+        setError(null);
+        if (timerRef.current) clearInterval(timerRef.current);
+        setElapsed(0);
+        setLogs(["Extraction cancelled."]);
+        window.dispatchEvent(new CustomEvent('aria-scraping', { detail: { active: false } }));
+    };
 
     const handleExtract = async () => {
         const inputStr = mode === "scrape" ? url : searchQuery;
@@ -285,6 +299,8 @@ export default function NexusDashboard() {
         setResult(null);
         setError(null);
         setElapsed(0);
+        isCancelledRef.current = false;
+        setCanCancel(true); // show cancel button — we haven't called Firecrawl yet
         setLogs(["Connecting to Web Extraction Engine...", "Extracting page content..."]);
 
         // Lock navigation during scraping
@@ -298,6 +314,12 @@ export default function NexusDashboard() {
             const payload = mode === "scrape" 
                  ? { url: inputStr.trim(), user_gemini_key: geminiKey }
                  : { query: inputStr.trim(), user_gemini_key: geminiKey };
+
+            // Check if user hit cancel before we even fire the API call
+            if (isCancelledRef.current) return;
+
+            setCanCancel(false); // Firecrawl request is now in-flight — can't cancel
+            addLog("Firecrawl API called — fetching page...");
 
             const res = await fetch(`${API_URL}${endpoint}`, {
                 method: "POST",
@@ -319,6 +341,7 @@ export default function NexusDashboard() {
             const json: ScrapeResponse | SearchResponse = await res.json();
             if (timerRef.current) clearInterval(timerRef.current);
             setLoading(false);
+            setCanCancel(false);
             setResult(json);
             window.dispatchEvent(new CustomEvent('aria-scraping', { detail: { active: false } }));
 
@@ -387,6 +410,7 @@ export default function NexusDashboard() {
         } catch (e: any) {
             if (timerRef.current) clearInterval(timerRef.current);
             setLoading(false);
+            setCanCancel(false);
             setError(e.message || "Connection failed");
             addLog(`Error: ${e.message}`);
             window.dispatchEvent(new CustomEvent('aria-scraping', { detail: { active: false } }));
@@ -542,8 +566,8 @@ export default function NexusDashboard() {
                 )}
             </AnimatePresence>
 
-            {/* Lock overlay during scraping — prevents navigation */}
-            {loading && (
+            {/* Lock overlay during scraping — prevents navigation but NOT cancel button */}
+            {loading && !canCancel && (
                 <div className="fixed inset-0 z-[99] bg-transparent cursor-wait" onClick={(e) => e.preventDefault()} />
             )}
 
@@ -890,6 +914,22 @@ export default function NexusDashboard() {
                                             style={{ width: "40%" }}
                                         />
                                     </div>
+
+                                    {/* Cancel Button — only before Firecrawl fires */}
+                                    <AnimatePresence>
+                                        {canCancel && (
+                                            <motion.button
+                                                initial={{ opacity: 0, y: 8 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: 8 }}
+                                                onClick={cancelExtraction}
+                                                className="relative z-[200] flex items-center space-x-2 px-6 py-2.5 rounded-xl border-2 border-red-500/50 text-red-400 hover:border-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all font-semibold text-sm cursor-pointer"
+                                            >
+                                                <XCircle size={16} />
+                                                <span>Cancel Extraction</span>
+                                            </motion.button>
+                                        )}
+                                    </AnimatePresence>
                                 </div>
                             </motion.div>
                         )}

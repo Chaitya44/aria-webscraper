@@ -186,7 +186,23 @@ _CLEAN_SPACES      = re.compile(r"[ \t]{2,}")
 _CLEAN_BLANK_LINES = re.compile(r"\n{3,}")
 
 
+# Block (multi-line) markup strippers for nav/header/footer/script/style sections
+_STRIP_SCRIPT  = re.compile(r'(?is)<script[^>]*>.*?</script>')
+_STRIP_STYLE   = re.compile(r'(?is)<style[^>]*>.*?</style>')
+_STRIP_NAV     = re.compile(r'(?is)<nav[^>]*>.*?</nav>')
+_STRIP_HEADER  = re.compile(r'(?is)<header[^>]*>.*?</header>')
+_STRIP_FOOTER  = re.compile(r'(?is)<footer[^>]*>.*?</footer>')
+# Strip bare URLs (not markdown image/link syntax) to reduce noise
+_STRIP_RAW_URL = re.compile(r'(?<![\[!\(])https?://[^\s\)\]"]{30,}')
+
+
 def _pre_clean_markdown(text: str) -> str:
+    # Strip heavy HTML blocks first
+    text = _STRIP_SCRIPT.sub('', text)
+    text = _STRIP_STYLE.sub('', text)
+    text = _STRIP_NAV.sub('', text)
+    text = _STRIP_HEADER.sub('', text)
+    text = _STRIP_FOOTER.sub('', text)
     text = _CLEAN_BR.sub("\n", text)
     text = _CLEAN_BOLD.sub("", text)
     text = _CLEAN_ITALIC.sub("", text)
@@ -196,6 +212,8 @@ def _pre_clean_markdown(text: str) -> str:
     text = _CLEAN_NBSP.sub(" ", text)
     text = _CLEAN_AMP.sub("&", text)
     text = _CLEAN_ENTITIES.sub("", text)
+    # Remove long standalone URLs that add noise without value
+    text = _STRIP_RAW_URL.sub('', text)
     text = _CLEAN_SPACES.sub(" ", text)
     text = _CLEAN_BLANK_LINES.sub("\n\n", text)
     return text.strip()
@@ -499,18 +517,21 @@ async def classify_page(markdown: str, user_key: str) -> str:
 
 SEARCH_SYSTEM_PROMPT = """You are an AI research assistant analyzing web search results. You MUST extract a structured list of the top items, products, or articles mentioned in the text. For every item, extract its title, a short description, the price (if applicable), the image URL, and the link to the item. Do not just summarize the page; you must populate the results array."""
 
-def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False) -> str:
+def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-2.5-flash") -> str:
     """
     Main extraction call — runs in a thread executor.
     Uses genai.Client (instance-scoped, thread-safe, no global configure() race).
-    Injects a 20-item cap instruction for DIRECTORY_OR_LIST pages unless in search mode.
+    Strips and truncates content to ~15k chars before sending to Gemini.
     """
     client = genai.Client(api_key=user_key)
 
     cleaned = _pre_clean_markdown(markdown)
-    truncated = _smart_truncate(cleaned, max_chars=1_000_000)
+    # Hard limit: after heavy stripping, target 15,000 chars for Gemini
+    truncated = _smart_truncate(cleaned, max_chars=15_000)
 
-    logger.info(f"[{page_type}] Sending {len(truncated)} chars to Gemini (from {len(markdown)} raw)")
+    before_len = len(markdown)
+    after_len = len(truncated)
+    logger.info(f"[{page_type}] Cleaned {before_len} → {after_len} chars before sending to Gemini ({model})")
 
     if is_search:
         prompt = f"{SEARCH_SYSTEM_PROMPT}\n\nExtract ALL data from these search results:\n\n{truncated}"
@@ -520,7 +541,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
         schema = StructuredResult
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=model,
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
@@ -529,7 +550,28 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
             max_output_tokens=8192,
         ),
     )
-    return response.text
+
+    # Null guard: check for empty/blocked response
+    if response is None:
+        raise ValueError("Gemini returned a None response object — possibly overloaded.")
+    if not hasattr(response, 'text') or response.text is None:
+        finish = getattr(getattr(response, 'candidates', [{}])[0] if response.candidates else {}, 'finish_reason', 'UNKNOWN')
+        raise ValueError(f"Gemini returned empty response body (finish_reason={finish}) — possibly blocked or overloaded.")
+
+    # Check for SAFETY block
+    candidates = getattr(response, 'candidates', []) or []
+    if candidates:
+        finish_reason = str(getattr(candidates[0], 'finish_reason', '')).upper()
+        if 'SAFETY' in finish_reason:
+            raise ValueError("Gemini blocked this content due to safety filters.")
+        if 'MAX_TOKENS' in finish_reason:
+            logger.warning(f"Gemini hit MAX_TOKENS limit ({model}). Attempting JSON recovery from truncated output.")
+
+    raw = response.text
+    if not raw or not raw.strip():
+        raise ValueError("Gemini returned empty string response.")
+
+    return raw
 
 
 async def structure_with_gemini(
@@ -540,17 +582,27 @@ async def structure_with_gemini(
     Returns (result_dict, error_message).
     error_message is None on success, or a human-readable reason on failure.
     JSON parsing wrapped in try/except with partial-JSON recovery.
+    Falls back to gemini-2.0-flash after 2 primary failures on gemini-2.5-flash.
     """
     max_retries = 4
     base_delay = 3
     last_error_msg: str | None = None
     raw_text: str = ""
+    cleaned: str = ""
+
+    # Primary model: gemini-2.5-flash; after 2 failures try gemini-2.0-flash
+    current_model = "gemini-2.5-flash"
 
     for attempt in range(1, max_retries + 1):
+        # Switch to fallback model after 2 consecutive failures
+        if attempt == 3 and current_model == "gemini-2.5-flash":
+            logger.warning("Switching to fallback model gemini-2.0-flash after 2 failures.")
+            current_model = "gemini-2.0-flash"
+
         try:
             loop = asyncio.get_event_loop()
             raw_text = await loop.run_in_executor(
-                _thread_pool, _call_gemini_sync, markdown, user_key, page_type, is_search
+                _thread_pool, _call_gemini_sync, markdown, user_key, page_type, is_search, current_model
             )
 
             # Strip accidental markdown fences
@@ -560,7 +612,7 @@ async def structure_with_gemini(
                 cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
             result = json.loads(cleaned)
-            logger.info("Gemini extraction succeeded on attempt %d (page_type=%s)", attempt, page_type)
+            logger.info("Gemini extraction succeeded on attempt %d (page_type=%s, model=%s)", attempt, page_type, current_model)
             return result, None
 
         except json.JSONDecodeError as exc:
@@ -592,7 +644,7 @@ async def structure_with_gemini(
         except Exception as exc:
             last_error_msg = str(exc)
             error_lower = last_error_msg.lower()
-            logger.warning(f"Gemini attempt {attempt}/{max_retries} error: {exc}")
+            logger.warning(f"Gemini attempt {attempt}/{max_retries} error ({current_model}): {exc}")
 
             # Auth errors — surface immediately
             if any(k in error_lower for k in ("api key", "api_key", "authenticate", "permission denied", "invalid")):
@@ -602,13 +654,17 @@ async def structure_with_gemini(
             if any(k in error_lower for k in ("user location", "not supported", "not found")):
                 return None, f"Model not supported for this API key tier/region. Updates to the API key may be required. ({exc})"
 
+            # Safety block
+            if "safety" in error_lower or "blocked" in error_lower:
+                return None, f"Gemini blocked this request due to safety filters. ({exc})"
+
             # Transient errors — retry with backoff
             is_transient = any(k in error_lower for k in (
                 "503", "unavailable", "429", "resource", "overloaded", "quota", "exhausted"
             ))
             if is_transient and attempt < max_retries:
                 delay = base_delay * (2 ** (attempt - 1))
-                logger.warning(f"Transient error — retrying in {delay}s...")
+                logger.warning(f"Transient error — retrying in {delay}s (attempt {attempt+1}/{max_retries})...")
                 await asyncio.sleep(delay)
                 continue
             break

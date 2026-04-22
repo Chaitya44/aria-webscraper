@@ -17,9 +17,11 @@ const FEATURES = [
 
 export default function LoginPage() {
     const router = useRouter();
-    const { user, signInWithGoogle, signInWithGitHub } = useAuth();
+    const { user, signInWithGoogle, signInWithGitHub, loading: authContextLoading } = useAuth();
     const [theme, setTheme] = useState<"dark" | "light">("dark");
     const [acceptedTerms, setAcceptedTerms] = useState(false);
+    const [authError, setAuthError] = useState<string | null>(null);
+    const [authLoading, setAuthLoading] = useState(false);
 
     useEffect(() => {
         const saved = localStorage.getItem("aria_theme") as "dark" | "light" | null;
@@ -30,7 +32,10 @@ export default function LoginPage() {
     }, []);
 
     useEffect(() => {
-        if (user) router.push("/");
+        if (user) {
+            console.log("[Auth] User authenticated, redirecting to dashboard", user.email);
+            router.replace("/");
+        }
     }, [user, router]);
 
     const toggleTheme = () => {
@@ -46,11 +51,22 @@ export default function LoginPage() {
             alert("Firebase is not configured.\n\nTo enable sign-in, create a Firebase project and add your credentials to:\nfrontend/nexus-scraper-ui/.env.local\n\nSee .env.local.example for the required variables.");
             return;
         }
+        setAuthError(null);
+        setAuthLoading(true);
         try {
             await signInWithGoogle();
-            router.push("/");
+            console.log("[Auth] Google sign-in succeeded");
+            router.replace("/");
         } catch (e: any) {
             console.error("[Auth] Google sign-in failed:", e.message);
+            const msg = e.code === 'auth/popup-closed-by-user'
+                ? "Sign-in popup was closed. Please try again."
+                : e.code === 'auth/popup-blocked'
+                ? "Popup was blocked by your browser. Please allow popups and try again."
+                : e.message || "Sign-in failed. Please try again.";
+            setAuthError(msg);
+        } finally {
+            setAuthLoading(false);
         }
     };
 
@@ -60,11 +76,26 @@ export default function LoginPage() {
             alert("Firebase is not configured.\n\nTo enable sign-in, create a Firebase project and add your credentials to:\nfrontend/nexus-scraper-ui/.env.local\n\nSee .env.local.example for the required variables.");
             return;
         }
+        setAuthError(null);
+        setAuthLoading(true);
         try {
             await signInWithGitHub();
-            router.push("/");
+            console.log("[Auth] GitHub sign-in succeeded");
+            router.replace("/");
         } catch (e: any) {
-            console.error("[Auth] GitHub sign-in failed:", e.message);
+            console.error("[Auth] GitHub sign-in failed:", e.code, e.message);
+            const msg = e.code === 'auth/popup-closed-by-user'
+                ? "Sign-in popup was closed. Please try again."
+                : e.code === 'auth/popup-blocked'
+                ? "Popup was blocked by your browser. Please allow popups for this site and try again."
+                : e.code === 'auth/account-exists-with-different-credential'
+                ? "An account already exists with this email using a different provider. Try signing in with Google."
+                : e.code === 'auth/cancelled-oauth-flow'
+                ? "OAuth flow was cancelled."
+                : e.message || "GitHub sign-in failed. Please try again.";
+            setAuthError(msg);
+        } finally {
+            setAuthLoading(false);
         }
     };
 
@@ -209,38 +240,62 @@ export default function LoginPage() {
                             </span>
                         </label>
 
+                        {/* Auth Error */}
+                        {authError && (
+                            <div className="flex items-start space-x-2.5 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="text-red-400 flex-shrink-0 mt-0.5" stroke="currentColor" strokeWidth="2">
+                                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                                </svg>
+                                <p className="text-red-400 text-xs leading-relaxed">{authError}</p>
+                            </div>
+                        )}
+
                         <div className="space-y-3">
                             {/* Google */}
                             <button
                                 onClick={handleGoogle}
-                                disabled={!acceptedTerms}
-                                className={`w-full flex items-center justify-center space-x-3 bg-white text-gray-800 font-semibold py-4 px-5 rounded-2xl transition-all duration-200 shadow-sm login-btn-google ${acceptedTerms
+                                disabled={!acceptedTerms || authLoading}
+                                className={`w-full flex items-center justify-center space-x-3 bg-white text-gray-800 font-semibold py-4 px-5 rounded-2xl transition-all duration-200 shadow-sm login-btn-google ${acceptedTerms && !authLoading
                                         ? "hover:bg-gray-50 hover:shadow-md cursor-pointer"
                                         : "opacity-40 cursor-not-allowed"
                                     }`}
                             >
-                                <svg width="20" height="20" viewBox="0 0 24 24">
-                                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
-                                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                                </svg>
-                                <span className="text-base">Continue with Google</span>
+                                {authLoading ? (
+                                    <svg className="animate-spin h-5 w-5 text-gray-600" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                                    </svg>
+                                ) : (
+                                    <svg width="20" height="20" viewBox="0 0 24 24">
+                                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
+                                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                                    </svg>
+                                )}
+                                <span className="text-base">{authLoading ? "Signing in..." : "Continue with Google"}</span>
                             </button>
 
                             {/* GitHub */}
                             <button
                                 onClick={handleGitHub}
-                                disabled={!acceptedTerms}
-                                className={`w-full flex items-center justify-center space-x-3 bg-[#161b22] text-white font-semibold py-4 px-5 rounded-2xl transition-all duration-200 border border-white/[0.08] login-btn-github ${acceptedTerms
+                                disabled={!acceptedTerms || authLoading}
+                                className={`w-full flex items-center justify-center space-x-3 bg-[#161b22] text-white font-semibold py-4 px-5 rounded-2xl transition-all duration-200 border border-white/[0.08] login-btn-github ${acceptedTerms && !authLoading
                                         ? "hover:bg-[#1f2937] hover:border-white/[0.15] cursor-pointer"
                                         : "opacity-40 cursor-not-allowed"
                                     }`}
                             >
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-                                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-                                </svg>
-                                <span className="text-base">Continue with GitHub</span>
+                                {authLoading ? (
+                                    <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                                    </svg>
+                                ) : (
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                                        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
+                                    </svg>
+                                )}
+                                <span className="text-base">{authLoading ? "Signing in..." : "Continue with GitHub"}</span>
                             </button>
                         </div>
 

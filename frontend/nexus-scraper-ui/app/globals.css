@@ -251,6 +251,25 @@
   backdrop-filter: blur(24px);
 }
 
+/* ── Ensure dropdown container doesn't clip child menus ─── */
+.user-menu-wrapper {
+  position: relative;
+  overflow: visible;
+  isolation: isolate;
+}
+
+/* Toast / snackbar notifications always on top */
+.toast-container {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    DARK MODE — data/table fluorescent green
    ═══════════════════════════════════════════════════════════════ */

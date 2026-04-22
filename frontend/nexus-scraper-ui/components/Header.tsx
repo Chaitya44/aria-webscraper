@@ -106,7 +106,7 @@ export default function Header() {
                     </button>
 
                     {user ? (
-                        <div className="relative" ref={menuRef}>
+                        <div className="relative user-menu-wrapper" ref={menuRef}>
                             <button
                                 onClick={() => setShowMenu(!showMenu)}
                                 className="flex items-center space-x-2 pl-1 pr-2 py-1 rounded-xl border border-white/[0.06] hover:border-white/[0.12] bg-white/[0.03] hover:bg-white/[0.06] transition-all duration-200 user-pill"
