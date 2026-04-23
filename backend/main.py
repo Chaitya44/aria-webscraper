@@ -548,7 +548,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
     after_len = len(truncated)
     logger.info(f"[{page_type}] Cleaned {before_len} → {after_len} chars before sending to Gemini ({model})")
 
-    constraint_prompt = "Return a maximum of 20 items. Be concise with field values. Do not include raw HTML in any field. Keep all string values under 200 characters. Your entire response must be valid complete JSON — never truncate mid-response."
+    constraint_prompt = "Return a maximum of 20 items. Be concise with field values. Do not include raw HTML in any field. Keep all string values under 200 characters. If you near the 64K token output limit, prioritize structural integrity over exhaustive paragraph extraction, ensuring the JSON remains valid and closed. Your entire response must be valid complete JSON — never truncate mid-response."
 
     if is_search:
         prompt = f"{SEARCH_SYSTEM_PROMPT}\n\nExtract ALL data from these search results:\n\n{truncated}\n\n{constraint_prompt}"
@@ -564,7 +564,8 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
             response_mime_type="application/json",
             response_schema=schema,
             temperature=0.1,
-            max_output_tokens=16000,
+            max_output_tokens=65536,
+            thinking_config={"include_thoughts": True}
         ),
     )
 
@@ -607,14 +608,14 @@ async def structure_with_gemini(
     raw_text: str = ""
     cleaned: str = ""
 
-    # Primary model: gemini-3.1-flash-lite-preview; after 2 failures try gemini-2.0-flash
+    # Primary model: gemini-3.1-flash-lite-preview; after 2 failures try gemini-3-flash-preview
     current_model = "gemini-3.1-flash-lite-preview"
 
     for attempt in range(1, max_retries + 1):
         # Switch to fallback model after 2 consecutive failures
         if attempt == 3 and current_model == "gemini-3.1-flash-lite-preview":
-            logger.warning("Switching to fallback model gemini-2.0-flash after 2 failures.")
-            current_model = "gemini-2.0-flash"
+            logger.warning("Switching to fallback model gemini-3-flash-preview after 2 failures.")
+            current_model = "gemini-3-flash-preview"
 
         try:
             loop = asyncio.get_event_loop()
