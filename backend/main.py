@@ -532,7 +532,7 @@ async def classify_page(markdown: str, user_key: str) -> str:
 
 SEARCH_SYSTEM_PROMPT = """You are an AI research assistant analyzing web search results. You MUST extract a structured list of the top items, products, or articles mentioned in the text. For every item, extract its title, a short description, the price (if applicable), the image URL, and the link to the item. Do not just summarize the page; you must populate the results array."""
 
-def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-3.1-flash-lite") -> str:
+def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-3.1-flash-lite-preview") -> str:
     """
     Main extraction call — runs in a thread executor.
     Uses genai.Client (instance-scoped, thread-safe, no global configure() race).
@@ -607,12 +607,12 @@ async def structure_with_gemini(
     raw_text: str = ""
     cleaned: str = ""
 
-    # Primary model: gemini-3.1-flash-lite; after 2 failures try gemini-2.0-flash
-    current_model = "gemini-3.1-flash-lite"
+    # Primary model: gemini-3.1-flash-lite-preview; after 2 failures try gemini-2.0-flash
+    current_model = "gemini-3.1-flash-lite-preview"
 
     for attempt in range(1, max_retries + 1):
         # Switch to fallback model after 2 consecutive failures
-        if attempt == 3 and current_model == "gemini-3.1-flash-lite":
+        if attempt == 3 and current_model == "gemini-3.1-flash-lite-preview":
             logger.warning("Switching to fallback model gemini-2.0-flash after 2 failures.")
             current_model = "gemini-2.0-flash"
 
@@ -689,8 +689,8 @@ async def structure_with_gemini(
                 "503", "unavailable", "429", "resource", "overloaded", "quota", "exhausted"
             ))
             if is_transient and attempt < max_retries:
-                if "503" in error_lower and current_model == "gemini-3.1-flash-lite":
-                    logger.warning("Falling back to gemini-1.5-flash due to 503")
+                if current_model == "gemini-3.1-flash-lite-preview" and any(k in error_lower for k in ("503", "429", "quota", "exhausted", "unavailable")):
+                    logger.warning("Falling back to gemini-1.5-flash due to preview model capacity/availability limits")
                     current_model = "gemini-1.5-flash"
                 delay = base_delay * (2 ** (attempt - 1))
                 logger.warning(f"Transient error — retrying in {delay}s (attempt {attempt+1}/{max_retries})...")
