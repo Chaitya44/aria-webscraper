@@ -145,10 +145,10 @@ function StructuredIllustration() {
 }
 
 const FEATURES = [
-    { Illustration: UniversalIllustration, title: "Universal Extraction", desc: "Works on any webpage — e-commerce, news, social media, music platforms, dashboards, forums, wikis, and more. No hardcoded selectors needed." },
-    { Illustration: AIIllustration, title: "Gemini 2.5 AI Engine", desc: "Google's latest AI model reads the page semantically, discovers the data schema, and structures everything automatically." },
-    { Illustration: StealthIllustration, title: "Stealth Extraction Engine", desc: "Cloud-powered browser with built-in anti-bot bypass, JS rendering, and intelligent Markdown extraction. No local browser needed." },
-    { Illustration: StructuredIllustration, title: "Schema-Perfect JSON", desc: "Every column aligned, every field typed. Null-safe output with instant CSV and JSON export. Ready for analysis." },
+    { Illustration: UniversalIllustration, title: "Universal Extraction", desc: "Works on any webpage — e-commerce, news, social media, music platforms, dashboards, forums, wikis, and more. No hardcoded selectors needed.", isNew: false },
+    { Illustration: AIIllustration, title: "Gemini 3.1 AI Engine", desc: "Google's latest AI model with thinking mode reads the page semantically, discovers the data schema, and structures everything automatically.", isNew: true },
+    { Illustration: StealthIllustration, title: "Stealth Extraction Engine", desc: "Cloud-powered browser with built-in anti-bot bypass, JS rendering, and intelligent Markdown extraction. No local browser needed.", isNew: false },
+    { Illustration: StructuredIllustration, title: "Schema-Perfect JSON", desc: "Every column aligned, every field typed. Null-safe output with instant CSV and JSON export. Ready for analysis.", isNew: false },
 ];
 
 // ── Main Component ───────────────────────────────────────────────────────────
@@ -597,7 +597,7 @@ export default function NexusDashboard() {
                             <span className="text-[9px] bg-white/[0.06] px-1.5 py-0.5 rounded-full text-gray-500 font-medium">{history.length}/{MAX_HISTORY}</span>
                         </div>
                         {history.length > 0 && (
-                            <button onClick={handleClearHistory} className="text-[10px] text-gray-600 hover:text-red-400 transition-colors">Clear</button>
+                            <button onClick={handleClearHistory} className="text-[10px] text-gray-500 hover:text-red-400 bg-white/[0.05] hover:bg-red-500/10 px-2.5 py-1 rounded-lg font-semibold transition-all duration-200">Clear</button>
                         )}
                     </div>
                     {history.length === 0 ? (
@@ -609,7 +609,7 @@ export default function NexusDashboard() {
                             <p className="text-gray-700 text-[10px] leading-relaxed px-4">Paste a URL and click Extract. Your last 5 results will appear here.</p>
                         </div>
                     ) : (
-                        <div className="space-y-2">
+                        <div className="space-y-3">
                             {history.map((entry) => (
                                 <motion.div
                                     key={entry.id}
@@ -663,8 +663,8 @@ export default function NexusDashboard() {
                             <br />
                             <span className="text-white/90 text-3xl md:text-5xl lg:text-6xl">from any website in seconds</span>
                         </h1>
-                        <p className="text-gray-500 text-sm md:text-base max-w-xl mx-auto leading-relaxed font-light hidden md:block">
-                            AI-powered extraction engine. Paste a URL — get clean tables, media, and links. Exports to JSON & CSV instantly.
+                        <p className="text-gray-300 text-sm md:text-base max-w-xl mx-auto leading-relaxed font-light hidden md:block">
+                            Turn messy websites into clean JSON or CSV in one click. Paste a URL — get structured tables, media, and links instantly.
                         </p>
                     </motion.div>
 
@@ -681,12 +681,14 @@ export default function NexusDashboard() {
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: 0.15 + i * 0.05 }}
-                                className="flex items-center space-x-2.5 group cursor-default"
+                                className="flex items-center space-x-2.5 group cursor-default px-3 py-2 rounded-xl hover:bg-white/[0.05] transition-all duration-200"
+                                title={f.desc}
                             >
-                                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center feature-icon-glow group-hover:scale-110 transition-transform duration-200">
+                                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center feature-icon-glow group-hover:scale-110 group-hover:shadow-[0_0_16px_rgba(16,185,129,0.25)] transition-all duration-200">
                                     <f.Illustration />
                                 </div>
-                                <span className="text-gray-400 text-xs font-semibold tracking-tight group-hover:text-white transition-colors whitespace-nowrap">{f.title}</span>
+                                <span className="text-gray-400 text-xs font-semibold tracking-tight group-hover:text-white transition-colors duration-200 whitespace-nowrap">{f.title}</span>
+                                {f.isNew && <span className="text-[9px] font-bold bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full border border-emerald-500/30 animate-pulse">NEW</span>}
                             </motion.div>
                         ))}
                     </motion.div>
@@ -805,7 +807,7 @@ export default function NexusDashboard() {
                                             onChange={(e) => setUrl(e.target.value)}
                                             onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
                                             placeholder="https://example.com"
-                                            className="w-full bg-white/[0.03] border border-white/[0.08] rounded-2xl py-5 pl-14 pr-48 text-white font-mono text-base focus:outline-none focus:border-emerald-500/40 focus:bg-white/[0.05] focus:shadow-[0_0_30px_rgba(16,185,129,0.08)] transition-all duration-300 placeholder:text-gray-700"
+                                            className="w-full bg-white/[0.05] border border-white/[0.15] rounded-2xl py-5 pl-14 pr-52 text-white font-mono text-base focus:outline-none focus:border-emerald-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(16,185,129,0.12)] transition-all duration-200 placeholder:text-gray-500"
                                         />
                                     ) : (
                                         <input
@@ -814,13 +816,13 @@ export default function NexusDashboard() {
                                             onChange={(e) => setSearchQuery(e.target.value)}
                                             onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
                                             placeholder="Search for anything (e.g. 'latest AI news')"
-                                            className="w-full bg-white/[0.03] border border-white/[0.08] rounded-2xl py-5 pl-14 pr-48 text-white font-mono text-base focus:outline-none focus:border-cyan-500/40 focus:bg-white/[0.05] focus:shadow-[0_0_30px_rgba(6,182,212,0.08)] transition-all duration-300 placeholder:text-gray-700"
+                                            className="w-full bg-white/[0.05] border border-white/[0.15] rounded-2xl py-5 pl-14 pr-52 text-white font-mono text-base focus:outline-none focus:border-cyan-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(6,182,212,0.12)] transition-all duration-200 placeholder:text-gray-500"
                                         />
                                     )}
                                     <button
                                         onClick={handleExtract}
                                         disabled={loading || (mode === "scrape" ? !url.trim() : !searchQuery.trim())}
-                                        className={`absolute right-2.5 top-2.5 bottom-2.5 px-10 rounded-xl font-bold text-base tracking-wide transition-all duration-200 flex items-center space-x-2.5 text-white shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/50 hover:scale-[1.02] active:scale-[0.98] ${
+                                        className={`absolute right-2.5 top-2.5 bottom-2.5 px-12 rounded-xl font-bold text-base tracking-wide transition-all duration-200 flex items-center space-x-2.5 text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/60 hover:scale-[1.03] active:scale-[0.97] ${
                                             mode === "scrape" 
                                                 ? "bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 border border-emerald-500/30" 
                                                 : "bg-gradient-to-r from-cyan-600 to-blue-500 hover:from-cyan-500 hover:to-blue-400 border border-cyan-500/30"
@@ -848,7 +850,7 @@ export default function NexusDashboard() {
                                     {logs.length === 0 && !loading && (
                                         <div className="flex items-start mb-1">
                                             <span className="text-emerald-600 mr-2 flex-shrink-0">$</span>
-                                            <span className="text-gray-600">Awaiting input...</span>
+                                            <span className="text-gray-500">Paste a URL above and click Extract to see structured data here</span>
                                             <span className="terminal-cursor" />
                                         </div>
                                     )}

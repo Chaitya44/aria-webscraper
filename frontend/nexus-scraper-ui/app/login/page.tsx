@@ -10,7 +10,7 @@ import Link from "next/link";
 
 const FEATURES = [
     { icon: Globe, title: "Any Website", desc: "E-commerce, news, social, forums — works everywhere without hardcoded selectors" },
-    { icon: Brain, title: "AI-Powered", desc: "Gemini 2.5 reads the page semantically and structures everything automatically" },
+    { icon: Brain, title: "AI-Powered", desc: "Gemini 3.1 with thinking mode reads the page semantically and structures everything automatically" },
     { icon: Database, title: "Clean Export", desc: "Schema-perfect JSON & CSV with null-safe, typed fields ready for analysis" },
     { icon: Shield, title: "Privacy First", desc: "All processing happens locally on your machine — zero data leaves your browser" },
 ];

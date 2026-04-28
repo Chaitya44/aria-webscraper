@@ -70,31 +70,35 @@ export default function Header() {
     return (
         <header className={`sticky top-0 z-[9999] w-full header-bar transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''}`}>
             <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-                {/* Left — Logo */}
-                <Link href="/" className="flex items-center space-x-2.5 group">
-                    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 group-hover:shadow-emerald-500/40 transition-shadow duration-300">
-                        <Sparkles size={15} className="text-white" />
-                    </div>
-                    <span className="text-xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">
-                        Aria
-                    </span>
-                </Link>
+                {/* Left — Logo & Nav */}
+                <div className="flex items-center space-x-8">
+                    <Link href="/" className="flex items-center space-x-2.5 group">
+                        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 group-hover:shadow-emerald-500/40 transition-shadow duration-300">
+                            <Sparkles size={15} className="text-white" />
+                        </div>
+                        <span className="text-xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">
+                            Aria
+                        </span>
+                    </Link>
 
-                {/* Center — Nav Pills */}
-                <nav className="hidden md:flex items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl px-1.5 py-1 nav-pill-container">
-                    {[
-                        { href: "/", label: "Dashboard" },
-                    ].map((link) => (
-                        <Link
-                            key={link.href}
-                            href={link.href}
-                            className={`relative px-4 py-1.5 rounded-xl text-[13px] font-medium transition-all duration-200 nav-link ${pathname === link.href ? "nav-link-active" : ""
-                                }`}
-                        >
-                            {link.label}
-                        </Link>
-                    ))}
-                </nav>
+                    <nav className="hidden md:flex items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl px-1.5 py-1 nav-pill-container">
+                        {[
+                            { href: "/", label: "Dashboard" },
+                        ].map((link) => (
+                            <Link
+                                key={link.href}
+                                href={link.href}
+                                className={`relative px-4 py-1.5 rounded-xl text-[13px] font-medium transition-all duration-200 nav-link ${pathname === link.href ? "nav-link-active" : ""
+                                    }`}
+                            >
+                                {link.label}
+                            </Link>
+                        ))}
+                    </nav>
+                </div>
+
+                {/* Center — Spacer */}
+                <div className="flex-1" />
 
                 {/* Right — Theme + User */}
                 <div className="flex items-center space-x-3">
