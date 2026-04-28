@@ -868,7 +868,7 @@ export default function NexusDashboard() {
                                                 onChange={(e) => setUrl(e.target.value)}
                                                 onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
                                                 placeholder="https://example.com"
-                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-52 text-white font-mono text-sm md:text-base focus:outline-none focus:border-emerald-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(16,185,129,0.12)] transition-all duration-200 placeholder:text-gray-500"
+                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-64 text-white font-mono text-sm md:text-base focus:outline-none focus:border-emerald-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(16,185,129,0.12)] transition-all duration-200 placeholder:text-gray-500"
                                             />
                                         ) : (
                                             <input
@@ -877,7 +877,7 @@ export default function NexusDashboard() {
                                                 onChange={(e) => setSearchQuery(e.target.value)}
                                                 onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
                                                 placeholder="Search for anything (e.g. 'latest AI news')"
-                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-52 text-white font-mono text-sm md:text-base focus:outline-none focus:border-cyan-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(6,182,212,0.12)] transition-all duration-200 placeholder:text-gray-500"
+                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-64 text-white font-mono text-sm md:text-base focus:outline-none focus:border-cyan-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(6,182,212,0.12)] transition-all duration-200 placeholder:text-gray-500"
                                             />
                                         )}
                                     </div>
