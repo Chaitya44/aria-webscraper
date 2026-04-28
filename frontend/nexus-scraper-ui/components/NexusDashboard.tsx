@@ -868,7 +868,7 @@ export default function NexusDashboard() {
                                                 onChange={(e) => setUrl(e.target.value)}
                                                 onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
                                                 placeholder="https://example.com"
-                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-64 text-white font-mono text-sm md:text-base focus:outline-none focus:border-emerald-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(16,185,129,0.12)] transition-all duration-200 placeholder:text-gray-500"
+                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-80 text-white font-mono text-sm md:text-base focus:outline-none focus:border-emerald-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(16,185,129,0.12)] transition-all duration-200 placeholder:text-gray-500"
                                             />
                                         ) : (
                                             <input
@@ -877,14 +877,14 @@ export default function NexusDashboard() {
                                                 onChange={(e) => setSearchQuery(e.target.value)}
                                                 onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
                                                 placeholder="Search for anything (e.g. 'latest AI news')"
-                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-64 text-white font-mono text-sm md:text-base focus:outline-none focus:border-cyan-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(6,182,212,0.12)] transition-all duration-200 placeholder:text-gray-500"
+                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-80 text-white font-mono text-sm md:text-base focus:outline-none focus:border-cyan-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(6,182,212,0.12)] transition-all duration-200 placeholder:text-gray-500"
                                             />
                                         )}
                                     </div>
                                     <button
                                         onClick={handleExtract}
                                         disabled={loading || keyStatus === "testing" || keyStatus === "invalid" || (mode === "scrape" ? !url.trim() : !searchQuery.trim())}
-                                        className={`w-full md:w-auto md:absolute md:right-2.5 md:top-2.5 md:bottom-2.5 py-3 md:py-0 px-6 md:px-12 rounded-xl font-bold text-sm md:text-base tracking-wide transition-all duration-200 flex items-center justify-center space-x-2.5 text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/60 hover:scale-[1.02] md:hover:scale-[1.03] active:scale-[0.97] ${
+                                        className={`w-full md:w-auto md:absolute md:right-2.5 md:top-2.5 md:bottom-2.5 py-3 md:py-0 px-4 md:px-8 rounded-xl font-bold text-sm md:text-base tracking-wide transition-all duration-200 flex items-center justify-center space-x-2.5 text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/60 hover:scale-[1.02] md:hover:scale-[1.03] active:scale-[0.97] ${
                                             mode === "scrape" 
                                                 ? "bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 border border-emerald-500/30" 
                                                 : "bg-gradient-to-r from-cyan-600 to-blue-500 hover:from-cyan-500 hover:to-blue-400 border border-cyan-500/30"
