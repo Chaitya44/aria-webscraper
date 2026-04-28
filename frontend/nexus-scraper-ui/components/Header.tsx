@@ -72,13 +72,12 @@ export default function Header() {
             <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
                 {/* Left — Logo & Nav */}
                 <div className="flex items-center space-x-8">
-                    <Link href="/" className="flex items-center space-x-2.5 group">
-                        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 group-hover:shadow-emerald-500/40 transition-shadow duration-300">
-                            <Sparkles size={15} className="text-white" />
-                        </div>
-                        <span className="text-xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">
-                            Aria
-                        </span>
+                    <Link href="/" className="flex items-center group">
+                        <img
+                            src="/aria-nav-logo.png"
+                            alt="Aria"
+                            className="h-7 object-contain group-hover:opacity-90 transition-opacity duration-200"
+                        />
                     </Link>
 
                     <nav className="hidden md:flex items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl px-1.5 py-1 nav-pill-container">

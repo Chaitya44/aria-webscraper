@@ -783,3 +783,81 @@ html.light .from-emerald-500\/10.to-cyan-500\/10 {
 html.light .text-emerald-500\/40 {
   color: rgba(99, 102, 241, 0.4) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   LIGHT MODE — STRONG CONTRAST OVERHAUL
+   ═══════════════════════════════════════════════════════════════════ */
+
+html.light .text-gray-300 {
+  color: #374151 !important;
+}
+
+html.light .text-gray-400 {
+  color: #4b5563 !important;
+}
+
+html.light .text-gray-500 {
+  color: #6b7280 !important;
+}
+
+html.light .text-gray-600 {
+  color: #6b7280 !important;
+}
+
+html.light p.text-gray-300 {
+  color: #374151 !important;
+}
+
+html.light .text-gray-400.text-xs.font-semibold {
+  color: #1f2937 !important;
+}
+
+html.light .glass-card {
+  background: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.04) !important;
+}
+
+html.light .glass-card-hover:hover {
+  background: rgba(255, 255, 255, 0.95) !important;
+  border-color: rgba(0, 0, 0, 0.12) !important;
+}
+
+html.light input[type="text"],
+html.light input[type="password"] {
+  background: rgba(0, 0, 0, 0.03) !important;
+  border-color: rgba(0, 0, 0, 0.15) !important;
+  color: #111827 !important;
+}
+
+html.light input[type="text"]::placeholder,
+html.light input[type="password"]::placeholder {
+  color: #9ca3af !important;
+}
+
+html.light input[type="text"]:focus,
+html.light input[type="password"]:focus {
+  border-color: rgba(99, 102, 241, 0.4) !important;
+  background: #fff !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1), 0 0 20px rgba(99, 102, 241, 0.05) !important;
+}
+
+html.light .text-white\/90 {
+  color: #1e293b !important;
+}
+
+html.light .border-white\/\[0\.04\],
+html.light .border-white\/\[0\.06\],
+html.light .border-white\/\[0\.08\],
+html.light .border-white\/\[0\.12\],
+html.light .border-white\/\[0\.15\] {
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+html.light .hover\:bg-white\/\[0\.05\]:hover {
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+
+html.light .orb {
+  opacity: 0.15 !important;
+}
