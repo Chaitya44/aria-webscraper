@@ -925,8 +925,12 @@ async def validate_key(payload: ValidateKeyRequest):
         return ValidateKeyResponse(valid=False, error="API key is empty")
     try:
         client = genai.Client(api_key=key)
-        # Fetching a single model is a zero-cost, fast way to validate auth
-        client.models.get(model="gemini-1.5-flash")
+        # Fetching a single token is a fast way to validate auth
+        client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents="hi",
+            config=types.GenerateContentConfig(max_output_tokens=1)
+        )
         return ValidateKeyResponse(valid=True)
     except Exception as e:
         logger.warning(f"Key validation failed: {e}")
