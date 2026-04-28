@@ -504,14 +504,18 @@ export default function NexusDashboard() {
         }
     };
 
+    const downloadBlob = (blob: Blob, filename: string) => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
+
     const exportJSON = () => {
         if (!result) return;
         const blob = new Blob([JSON.stringify(result.structured_data, null, 2)], { type: "application/json" });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `aria-${Date.now()}.json`;
-        a.click();
-        URL.revokeObjectURL(a.href);
+        downloadBlob(blob, `aria-full-${Date.now()}.json`);
     };
 
     const exportCSV = (table: DataTable) => {
@@ -521,11 +525,17 @@ export default function NexusDashboard() {
             row.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")
         );
         const blob = new Blob([[header, ...rows].join("\n")], { type: "text/csv" });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `${(table.title || "data").replace(/\s+/g, "_")}-${Date.now()}.csv`;
-        a.click();
-        URL.revokeObjectURL(a.href);
+        downloadBlob(blob, `${(table.title || "data").replace(/\s+/g, "_")}-${Date.now()}.csv`);
+    };
+
+    const exportSectionJSON = (data: any, name: string) => {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        downloadBlob(blob, `aria-${name.toLowerCase().replace(/\s+/g, "_")}-${Date.now()}.json`);
+    };
+
+    const exportSectionTXT = (lines: string[], name: string) => {
+        const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+        downloadBlob(blob, `aria-${name.toLowerCase().replace(/\s+/g, "_")}-${Date.now()}.txt`);
     };
 
     return (
@@ -1038,6 +1048,10 @@ export default function NexusDashboard() {
                                                             </p>
                                                         </div>
                                                     </div>
+                                                    <button onClick={() => exportSectionJSON((result.structured_data as SearchStructuredResponse).results, "search_results")}
+                                                         className="flex items-center space-x-2 text-[10px] bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-gray-400 hover:text-white px-3 py-1.5 rounded-lg transition-all font-medium">
+                                                         <Download size={12} /><span>JSON</span>
+                                                    </button>
                                                 </div>
                                                 <p className="text-cyan-100 text-sm leading-relaxed pt-2">
                                                     {(result.structured_data as SearchStructuredResponse).search_summary}
@@ -1123,12 +1137,20 @@ export default function NexusDashboard() {
                                                                 {table.rows?.length || 0} rows
                                                             </span>
                                                         </div>
-                                                        {table.rows?.length > 0 && (
-                                                            <button onClick={() => exportCSV(table)}
-                                                                className="text-[11px] text-gray-500 hover:text-gray-300 bg-white/[0.03] hover:bg-white/[0.06] px-3 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium">
-                                                                CSV ↓
-                                                            </button>
-                                                        )}
+                                                        <div className="flex items-center space-x-2">
+                                                            {table.rows?.length > 0 && (
+                                                                <>
+                                                                    <button onClick={() => exportCSV(table)}
+                                                                        className="text-[10px] text-gray-500 hover:text-emerald-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1">
+                                                                        <Download size={11} /><span>CSV</span>
+                                                                    </button>
+                                                                    <button onClick={() => exportSectionJSON(table, `table_${idx + 1}`)}
+                                                                        className="text-[10px] text-gray-500 hover:text-emerald-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1">
+                                                                        <Download size={11} /><span>JSON</span>
+                                                                    </button>
+                                                                </>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                     <div className="glass-card rounded-xl overflow-hidden">
                                                         <div className="overflow-x-auto">
@@ -1156,12 +1178,18 @@ export default function NexusDashboard() {
                                             {/* Media */}
                                             {(result.structured_data as StructuredData).media?.length > 0 && (
                                                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                                                    <div className="flex items-center space-x-2.5 mb-3">
-                                                        <Globe className="text-cyan-500" size={15} />
-                                                        <h2 className="text-sm font-bold text-white tracking-wide">Media</h2>
-                                                        <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                            {(result.structured_data as StructuredData).media.length}
-                                                        </span>
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <div className="flex items-center space-x-2.5">
+                                                            <Globe className="text-cyan-500" size={15} />
+                                                            <h2 className="text-sm font-bold text-white tracking-wide">Media</h2>
+                                                            <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                                {(result.structured_data as StructuredData).media.length}
+                                                            </span>
+                                                        </div>
+                                                        <button onClick={() => exportSectionJSON((result.structured_data as StructuredData).media, "media")}
+                                                            className="text-[10px] text-gray-500 hover:text-cyan-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1">
+                                                            <Download size={11} /><span>JSON</span>
+                                                        </button>
                                                     </div>
                                                     <div className="glass-card rounded-xl p-4">
                                                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -1186,12 +1214,24 @@ export default function NexusDashboard() {
                                     {/* External Links */}
                                     {(result.structured_data as StructuredData).external_links?.length > 0 && (
                                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                                            <div className="flex items-center space-x-2.5 mb-3">
-                                                <ExternalLink className="text-purple-400" size={15} />
-                                                <h2 className="text-sm font-bold text-white tracking-wide">External Links</h2>
-                                                <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                    {(result.structured_data as StructuredData).external_links.length}
-                                                </span>
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center space-x-2.5">
+                                                    <ExternalLink className="text-purple-400" size={15} />
+                                                    <h2 className="text-sm font-bold text-white tracking-wide">External Links</h2>
+                                                    <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                        {(result.structured_data as StructuredData).external_links.length}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <button onClick={() => exportSectionTXT((result.structured_data as StructuredData).external_links, "external_links")}
+                                                        className="text-[10px] text-gray-500 hover:text-purple-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1">
+                                                        <Download size={11} /><span>TXT</span>
+                                                    </button>
+                                                    <button onClick={() => exportSectionJSON((result.structured_data as StructuredData).external_links, "external_links")}
+                                                        className="text-[10px] text-gray-500 hover:text-purple-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1">
+                                                        <Download size={11} /><span>JSON</span>
+                                                    </button>
+                                                </div>
                                             </div>
                                             <div className="glass-card rounded-xl p-4">
                                                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
@@ -1209,12 +1249,18 @@ export default function NexusDashboard() {
                                     {/* Named Links (text + URL) */}
                                     {(result.structured_data as StructuredData).links?.length > 0 && (
                                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                                            <div className="flex items-center space-x-2.5 mb-3">
-                                                <ExternalLink className="text-emerald-400" size={15} />
-                                                <h2 className="text-sm font-bold text-white tracking-wide">Page Links</h2>
-                                                <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                    {(result.structured_data as StructuredData).links.length}
-                                                </span>
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center space-x-2.5">
+                                                    <ExternalLink className="text-emerald-400" size={15} />
+                                                    <h2 className="text-sm font-bold text-white tracking-wide">Page Links</h2>
+                                                    <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                        {(result.structured_data as StructuredData).links.length}
+                                                    </span>
+                                                </div>
+                                                <button onClick={() => exportSectionJSON((result.structured_data as StructuredData).links, "links")}
+                                                    className="text-[10px] text-gray-500 hover:text-emerald-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1">
+                                                    <Download size={11} /><span>JSON</span>
+                                                </button>
                                             </div>
                                             <div className="glass-card rounded-xl overflow-hidden">
                                                 <div className="overflow-x-auto max-h-64 overflow-y-auto">
@@ -1249,12 +1295,18 @@ export default function NexusDashboard() {
                                     {/* Page Headings */}
                                     {(result.structured_data as StructuredData).headings?.length > 0 && (
                                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                                            <div className="flex items-center space-x-2.5 mb-3">
-                                                <Database className="text-violet-400" size={15} />
-                                                <h2 className="text-sm font-bold text-white tracking-wide">Page Headings</h2>
-                                                <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                    {(result.structured_data as StructuredData).headings.length}
-                                                </span>
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center space-x-2.5">
+                                                    <Database className="text-violet-400" size={15} />
+                                                    <h2 className="text-sm font-bold text-white tracking-wide">Page Headings</h2>
+                                                    <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                        {(result.structured_data as StructuredData).headings.length}
+                                                    </span>
+                                                </div>
+                                                <button onClick={() => exportSectionTXT((result.structured_data as StructuredData).headings, "headings")}
+                                                    className="text-[10px] text-gray-500 hover:text-violet-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1">
+                                                    <Download size={11} /><span>TXT</span>
+                                                </button>
                                             </div>
                                             <div className="glass-card rounded-xl p-4">
                                                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
@@ -1272,12 +1324,18 @@ export default function NexusDashboard() {
                                     {/* Paragraphs / Body Text */}
                                     {(result.structured_data as StructuredData).paragraphs?.length > 0 && (
                                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                                            <div className="flex items-center space-x-2.5 mb-3">
-                                                <Zap className="text-amber-400" size={15} />
-                                                <h2 className="text-sm font-bold text-white tracking-wide">Body Text</h2>
-                                                <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
-                                                    {(result.structured_data as StructuredData).paragraphs.length} paragraphs
-                                                </span>
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center space-x-2.5">
+                                                    <Zap className="text-amber-400" size={15} />
+                                                    <h2 className="text-sm font-bold text-white tracking-wide">Body Text</h2>
+                                                    <span className="text-[10px] bg-white/[0.06] px-2 py-0.5 rounded-full text-gray-500 font-medium">
+                                                        {(result.structured_data as StructuredData).paragraphs.length} paragraphs
+                                                    </span>
+                                                </div>
+                                                <button onClick={() => exportSectionTXT((result.structured_data as StructuredData).paragraphs, "paragraphs")}
+                                                    className="text-[10px] text-gray-500 hover:text-amber-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1">
+                                                    <Download size={11} /><span>TXT</span>
+                                                </button>
                                             </div>
                                             <div className="glass-card rounded-xl p-4 space-y-3 max-h-96 overflow-y-auto">
                                                 {(result.structured_data as StructuredData).paragraphs.map((para, i) => (
