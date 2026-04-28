@@ -68,35 +68,37 @@ export default function Header() {
     const isDark = theme === "dark";
 
     return (
-        <header className={`sticky top-0 z-[9999] w-full header-bar transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''}`}>
-            <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-                {/* Left — Logo & Nav */}
-                <div className="flex items-center space-x-8">
-                    <Link href="/" className="flex items-center group">
-                        <img
-                            src="/aria-nav-logo.png"
-                            alt="Aria"
-                            className="h-7 object-contain group-hover:opacity-90 transition-opacity duration-200"
-                        />
-                    </Link>
+        <header className={`sticky top-0 z-[9999] w-full header-bar border-b border-white/[0.06] transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''}`}>
+            <div className="max-w-7xl mx-auto px-6 h-14 flex items-center gap-8">
+                {/* Left — Logo */}
+                <Link href="/" className="flex items-center group flex-shrink-0">
+                    <img
+                        src="/aria-nav-logo.png"
+                        alt="Aria"
+                        className="h-8 object-contain group-hover:opacity-80 transition-opacity duration-200"
+                    />
+                </Link>
 
-                    <nav className="hidden md:flex items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl px-1.5 py-1 nav-pill-container">
-                        {[
-                            { href: "/", label: "Dashboard" },
-                        ].map((link) => (
-                            <Link
-                                key={link.href}
-                                href={link.href}
-                                className={`relative px-4 py-1.5 rounded-xl text-[13px] font-medium transition-all duration-200 nav-link ${pathname === link.href ? "nav-link-active" : ""
-                                    }`}
-                            >
-                                {link.label}
-                            </Link>
-                        ))}
-                    </nav>
-                </div>
+                {/* Nav Links */}
+                <nav className="hidden md:flex items-center gap-1">
+                    {[
+                        { href: "/", label: "Dashboard" },
+                    ].map((link) => (
+                        <Link
+                            key={link.href}
+                            href={link.href}
+                            className={`relative px-3.5 py-1.5 rounded-lg text-[13px] font-semibold transition-all duration-200 ${
+                                pathname === link.href
+                                    ? "text-emerald-400 bg-emerald-500/10"
+                                    : "text-gray-400 hover:text-white hover:bg-white/[0.06]"
+                            }`}
+                        >
+                            {link.label}
+                        </Link>
+                    ))}
+                </nav>
 
-                {/* Center — Spacer */}
+                {/* Spacer */}
                 <div className="flex-1" />
 
                 {/* Right — Theme + User */}
