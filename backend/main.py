@@ -924,17 +924,25 @@ async def validate_key(payload: ValidateKeyRequest):
     if not key:
         return ValidateKeyResponse(valid=False, error="API key is empty")
     try:
-        client = genai.Client(api_key=key)
-        # Fetching a single token is a fast way to validate auth
-        client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents="hi",
-            config=types.GenerateContentConfig(max_output_tokens=1)
-        )
-        return ValidateKeyResponse(valid=True)
+        # Use a raw HTTP request to completely bypass SDK quirks
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=5.0)
+            
+        if resp.status_code == 200:
+            return ValidateKeyResponse(valid=True)
+            
+        err_data = resp.json()
+        err_msg = err_data.get("error", {}).get("message", "Unknown error")
+        
+        if "API_KEY_INVALID" in str(err_data) or resp.status_code in (400, 403):
+            return ValidateKeyResponse(valid=False, error="Invalid API key")
+            
+        return ValidateKeyResponse(valid=False, error=f"API Error: {err_msg[:100]}")
+        
     except Exception as e:
-        logger.warning(f"Key validation failed: {e}")
-        return ValidateKeyResponse(valid=False, error="Invalid API key")
+        logger.warning(f"Key validation exception: {str(e)}")
+        return ValidateKeyResponse(valid=False, error=f"Network Error: {str(e)[:100]}")
 
 
 @app.get("/usage")
