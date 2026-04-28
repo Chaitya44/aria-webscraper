@@ -167,6 +167,8 @@ export default function NexusDashboard() {
     const [todayCount, setTodayCount] = useState(0);
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     const [geminiKey, setGeminiKey] = useState("");
+    const [keyStatus, setKeyStatus] = useState<"untested" | "testing" | "valid" | "invalid">("untested");
+    const [keyError, setKeyError] = useState<string | null>(null);
     const [keyLoaded, setKeyLoaded] = useState(false);
     const [showKey, setShowKey] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
@@ -218,6 +220,39 @@ export default function NexusDashboard() {
         };
         loadData();
     }, [user]);
+
+    // Validate API Key
+    useEffect(() => {
+        if (!keyLoaded) return;
+        if (!geminiKey || geminiKey.trim().length < 10) {
+            setKeyStatus("untested");
+            setKeyError(null);
+            return;
+        }
+        setKeyStatus("testing");
+        setKeyError(null);
+        const timer = setTimeout(async () => {
+            try {
+                const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+                const res = await fetch(`${API_URL}/validate-key`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_gemini_key: geminiKey }),
+                });
+                const data = await res.json();
+                if (data.valid) {
+                    setKeyStatus("valid");
+                } else {
+                    setKeyStatus("invalid");
+                    setKeyError(data.error || "Invalid API key");
+                }
+            } catch (e) {
+                setKeyStatus("invalid");
+                setKeyError("Network error checking key");
+            }
+        }, 800);
+        return () => clearTimeout(timer);
+    }, [geminiKey, keyLoaded]);
 
     const saveLocalHistory = (entries: HistoryEntry[]) => {
         setHistory(entries);
@@ -722,13 +757,20 @@ export default function NexusDashboard() {
                                 >
                                     <Settings size={14} className={showSettings ? "text-emerald-400" : ""} />
                                     <span className="tracking-wide">API Key</span>
-                                    {geminiKey ? (
+                                    {keyStatus === "valid" ? (
                                         <span className="flex items-center space-x-1 ml-1">
                                             <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.4)]" />
                                             <span className="text-emerald-400 text-[10px] font-bold">Connected</span>
                                         </span>
+                                    ) : keyStatus === "testing" ? (
+                                        <span className="flex items-center space-x-1 ml-1 text-amber-400">
+                                            <Loader2 size={10} className="animate-spin" />
+                                            <span className="text-[10px] font-bold">Verifying...</span>
+                                        </span>
+                                    ) : keyStatus === "invalid" ? (
+                                        <span className="text-red-400 text-[10px] font-bold ml-1 animate-pulse">● Invalid Key</span>
                                     ) : (
-                                        <span className="text-red-400 text-[10px] font-bold ml-1 animate-pulse">● required</span>
+                                        <span className="text-red-400 text-[10px] font-bold ml-1 animate-pulse">● Required</span>
                                     )}
                                 </button>
                                 <AnimatePresence>
@@ -772,6 +814,11 @@ export default function NexusDashboard() {
                                                         {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
                                                     </button>
                                                 </div>
+                                                {keyError && (
+                                                    <p className="text-red-400 text-xs font-medium">
+                                                        {keyError}
+                                                    </p>
+                                                )}
                                                 <p className="text-gray-600 text-[10px]">
                                                     🔒 Stored locally in your browser. Never sent to third parties.
                                                 </p>
@@ -836,7 +883,7 @@ export default function NexusDashboard() {
                                     </div>
                                     <button
                                         onClick={handleExtract}
-                                        disabled={loading || (mode === "scrape" ? !url.trim() : !searchQuery.trim())}
+                                        disabled={loading || keyStatus === "testing" || keyStatus === "invalid" || (mode === "scrape" ? !url.trim() : !searchQuery.trim())}
                                         className={`w-full md:w-auto md:absolute md:right-2.5 md:top-2.5 md:bottom-2.5 py-3 md:py-0 px-6 md:px-12 rounded-xl font-bold text-sm md:text-base tracking-wide transition-all duration-200 flex items-center justify-center space-x-2.5 text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/60 hover:scale-[1.02] md:hover:scale-[1.03] active:scale-[0.97] ${
                                             mode === "scrape" 
                                                 ? "bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 border border-emerald-500/30" 

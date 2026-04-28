@@ -162,6 +162,15 @@ class SearchResponse(BaseModel):
     combined_markdown: str
 
 
+class ValidateKeyRequest(BaseModel):
+    user_gemini_key: str
+
+
+class ValidateKeyResponse(BaseModel):
+    valid: bool
+    error: str | None = None
+
+
 # ──────────────────────────── Pydantic Schema for Classifier ───────
 
 class _PageClassification(BaseModel):
@@ -907,6 +916,21 @@ async def health():
         "service": "aiwebscraper-smart-microservice",
         "version": "8.0.0",
     }
+
+
+@app.post("/validate-key", response_model=ValidateKeyResponse)
+async def validate_key(payload: ValidateKeyRequest):
+    key = payload.user_gemini_key.strip()
+    if not key:
+        return ValidateKeyResponse(valid=False, error="API key is empty")
+    try:
+        client = genai.Client(api_key=key)
+        # Fetching a single model is a zero-cost, fast way to validate auth
+        client.models.get(model="gemini-1.5-flash")
+        return ValidateKeyResponse(valid=True)
+    except Exception as e:
+        logger.warning(f"Key validation failed: {e}")
+        return ValidateKeyResponse(valid=False, error="Invalid API key")
 
 
 @app.get("/usage")
