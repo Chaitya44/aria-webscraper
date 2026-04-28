@@ -69,39 +69,34 @@ export default function Header() {
 
     return (
         <header className={`sticky top-0 z-[9999] w-full header-bar border-b border-white/[0.06] transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''}`}>
-            <div className="max-w-7xl mx-auto px-6 h-14 flex items-center">
+            <div className="max-w-7xl mx-auto px-6 h-14 grid grid-cols-[1fr_auto_1fr] items-center">
                 {/* Left — Brand Logo */}
-                <Link href="/" className="flex items-center group flex-shrink-0">
-                    <img
-                        src="/aria-nav-logo.png"
-                        alt="Aria"
-                        className="h-14 object-contain group-hover:opacity-80 transition-opacity duration-200"
-                    />
-                </Link>
+                <div className="flex items-center justify-start">
+                    <Link href="/" className="flex items-center group">
+                        <img
+                            src="/aria-nav-logo.png"
+                            alt="Aria"
+                            className="h-14 object-contain group-hover:opacity-80 transition-opacity duration-200"
+                        />
+                    </Link>
+                </div>
 
-                {/* Center — Dashboard (pushed to center with flex spacers) */}
-                <div className="flex-1" />
-                <nav className="hidden md:flex items-center">
-                    {[
-                        { href: "/", label: "Dashboard" },
-                    ].map((link) => (
-                        <Link
-                            key={link.href}
-                            href={link.href}
-                            className={`relative px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-200 border ${
-                                pathname === link.href
-                                    ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/10"
-                                    : "text-gray-400 border-white/[0.08] hover:text-white hover:border-white/[0.15] hover:bg-white/[0.04]"
-                            }`}
-                        >
-                            {link.label}
-                        </Link>
-                    ))}
+                {/* Center — Dashboard (true center via grid) */}
+                <nav className="hidden md:flex items-center justify-center">
+                    <Link
+                        href="/"
+                        className={`px-5 py-1.5 rounded-xl text-sm font-semibold transition-all duration-200 border ${
+                            pathname === "/"
+                                ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/10"
+                                : "text-gray-400 border-white/[0.08] hover:text-white hover:border-white/[0.15] hover:bg-white/[0.04]"
+                        }`}
+                    >
+                        Dashboard
+                    </Link>
                 </nav>
-                <div className="flex-1" />
 
                 {/* Right — Theme + User */}
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center justify-end space-x-3">
                     {/* Theme toggle */}
                     <button
                         onClick={toggleTheme}
