@@ -173,9 +173,9 @@ export default function NexusDashboard() {
     const [showKey, setShowKey] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
-    // isCancelled: true only BEFORE the Firecrawl API call is made
+    // isCancelled: true only BEFORE the Aria Engine API call is made
     const isCancelledRef = useRef(false);
-    const [canCancel, setCanCancel] = useState(false); // show cancel button only pre-Firecrawl
+    const [canCancel, setCanCancel] = useState(false); // show cancel button only pre-Aria
     const resultRef = useRef<HTMLDivElement>(null);
     const errorRef = useRef<HTMLDivElement>(null);
     const [resultKey, setResultKey] = useState(0); // increments on each new extraction result
@@ -340,7 +340,7 @@ export default function NexusDashboard() {
         setError(null);
         setElapsed(0);
         isCancelledRef.current = false;
-        setCanCancel(true); // show cancel button — we haven't called Firecrawl yet
+        setCanCancel(true); // show cancel button — we haven't called Aria Engine yet
         setLogs(["Connecting to Web Extraction Engine...", "Extracting page content..."]);
 
         // Lock navigation during scraping
@@ -358,8 +358,8 @@ export default function NexusDashboard() {
             // Check if user hit cancel before we even fire the API call
             if (isCancelledRef.current) return;
 
-            setCanCancel(false); // Firecrawl request is now in-flight — can't cancel
-            addLog("Firecrawl API called — fetching page...");
+            setCanCancel(false); // Aria Engine request is now in-flight — can't cancel
+            addLog("Aria Engine engaged — fetching page...");
 
             const res = await fetch(`${API_URL}${endpoint}`, {
                 method: "POST",
@@ -1004,7 +1004,7 @@ export default function NexusDashboard() {
                                         />
                                     </div>
 
-                                    {/* Cancel Button — only before Firecrawl fires */}
+                                    {/* Cancel Button — only before Aria Engine fires */}
                                     <AnimatePresence>
                                         {canCancel && (
                                             <motion.button

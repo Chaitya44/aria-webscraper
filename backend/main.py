@@ -1,10 +1,10 @@
 """
 AIWebScraper Smart Microservice — v8.0
-FastAPI backend: Firecrawl + BYOK Gemini + Two-Pass Classification.
+FastAPI backend: Aria Scraper + BYOK Gemini + Two-Pass Classification.
 
 Changes in v8:
 - Rate limiting: 10 extractions/day per Gemini key (in-memory, resets at UTC midnight)
-- New /search-and-structure endpoint using Firecrawl /v1/search
+- New /search-and-structure endpoint using Search Core /v1/search
 - Two-Pass architecture: Pass 1 classifies page type (5k chars, fast),
   Pass 2 extracts with a schema-aware prompt tuned to the page type
 - DIRECTORY_OR_LIST pages get a hard 20-item cap to prevent JSON truncation
@@ -82,7 +82,7 @@ def check_rate_limit(gemini_key: str) -> None:
 
 app = FastAPI(
     title="AIWebScraper — Smart Microservice",
-    description="Firecrawl + BYOK Gemini 2.5 Flash: scrape or search any page, get structured JSON.",
+    description="Aria Scraper + BYOK Gemini: scrape or search any page, get structured JSON.",
     version="8.0.0",
 )
 
