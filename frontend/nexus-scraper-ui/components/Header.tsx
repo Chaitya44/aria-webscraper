@@ -66,7 +66,7 @@ export default function Header() {
     const isDark = theme === "dark";
 
     return (
-        <div className={`fixed top-0 right-0 z-[9999] p-6 transition-opacity duration-300 pointer-events-none ${isLocked ? 'opacity-50' : ''}`}>
+        <div className={`fixed top-0 right-0 z-[9999] p-4 md:p-6 transition-opacity duration-300 pointer-events-none ${isLocked ? 'opacity-50' : ''}`}>
             <div className="flex items-center justify-end space-x-3 pointer-events-auto">
                 {/* Theme toggle */}
                 <button

@@ -661,7 +661,7 @@ export default function NexusDashboard() {
                 )}
 
                 {/* ── MAIN CONTENT — left-offset so sidebar never hides it ── */}
-                <div className="flex-1 min-w-0 px-4 md:px-8 py-6 md:py-10 overflow-x-hidden">
+                <div className="flex-1 min-w-0 px-4 md:px-8 pb-6 md:py-10 pt-20 md:pt-10 overflow-x-hidden">
                     <div className="max-w-4xl mx-auto">
 
                     {/* ── HERO ──────────────────────────────────────────── */}
@@ -686,7 +686,7 @@ export default function NexusDashboard() {
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         transition={{ delay: 0.1 }}
-                        className="flex flex-wrap items-center justify-center gap-4 md:gap-8 mb-8 md:mb-10"
+                        className="grid grid-cols-2 md:flex md:flex-wrap items-center justify-center gap-3 md:gap-8 mb-8 md:mb-10"
                     >
                         {FEATURES.map((f, i) => (
                             <motion.div
@@ -694,14 +694,14 @@ export default function NexusDashboard() {
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: 0.15 + i * 0.05 }}
-                                className="flex items-center space-x-2.5 group cursor-default px-3 py-2 rounded-xl hover:bg-white/[0.05] transition-all duration-200"
+                                className="flex items-center space-x-2 md:space-x-2.5 group cursor-default px-2 md:px-3 py-2 rounded-xl hover:bg-white/[0.05] transition-all duration-200"
                                 title={f.desc}
                             >
-                                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center feature-icon-glow group-hover:scale-110 group-hover:shadow-[0_0_16px_rgba(16,185,129,0.25)] transition-all duration-200">
+                                <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center feature-icon-glow group-hover:scale-110 group-hover:shadow-[0_0_16px_rgba(16,185,129,0.25)] transition-all duration-200 flex-shrink-0">
                                     <f.Illustration />
                                 </div>
-                                <span className="text-gray-400 text-xs font-semibold tracking-tight group-hover:text-white transition-colors duration-200 whitespace-nowrap">{f.title}</span>
-                                {f.isNew && <span className="text-[9px] font-bold bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full border border-emerald-500/30 animate-pulse">NEW</span>}
+                                <span className="text-gray-400 text-[10px] md:text-xs font-semibold tracking-tight group-hover:text-white transition-colors duration-200 leading-tight">{f.title}</span>
+                                {f.isNew && <span className="hidden md:inline-block text-[9px] font-bold bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full border border-emerald-500/30 animate-pulse">NEW</span>}
                             </motion.div>
                         ))}
                     </motion.div>
@@ -805,43 +805,45 @@ export default function NexusDashboard() {
                                     </button>
                                 </div>
 
-                                <div className="relative group">
-                                    <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
+                                <div className="relative group flex flex-col md:block gap-3">
+                                    <div className="relative">
+                                        <div className="absolute inset-y-0 left-4 md:left-5 flex items-center pointer-events-none">
+                                            {mode === "scrape" ? (
+                                                <Globe className="h-5 w-5 md:h-6 md:w-6 text-gray-600 group-focus-within:text-emerald-400 transition-colors duration-300" />
+                                            ) : (
+                                                <Search className="h-5 w-5 md:h-6 md:w-6 text-gray-600 group-focus-within:text-cyan-400 transition-colors duration-300" />
+                                            )}
+                                        </div>
                                         {mode === "scrape" ? (
-                                            <Globe className="h-6 w-6 text-gray-600 group-focus-within:text-emerald-400 transition-colors duration-300" />
+                                            <input
+                                                type="text"
+                                                value={url}
+                                                onChange={(e) => setUrl(e.target.value)}
+                                                onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
+                                                placeholder="https://example.com"
+                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-52 text-white font-mono text-sm md:text-base focus:outline-none focus:border-emerald-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(16,185,129,0.12)] transition-all duration-200 placeholder:text-gray-500"
+                                            />
                                         ) : (
-                                            <Search className="h-6 w-6 text-gray-600 group-focus-within:text-cyan-400 transition-colors duration-300" />
+                                            <input
+                                                type="text"
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
+                                                placeholder="Search for anything (e.g. 'latest AI news')"
+                                                className="w-full bg-white/[0.05] border border-white/[0.15] rounded-xl md:rounded-2xl py-4 md:py-5 pl-12 md:pl-14 pr-4 md:pr-52 text-white font-mono text-sm md:text-base focus:outline-none focus:border-cyan-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(6,182,212,0.12)] transition-all duration-200 placeholder:text-gray-500"
+                                            />
                                         )}
                                     </div>
-                                    {mode === "scrape" ? (
-                                        <input
-                                            type="text"
-                                            value={url}
-                                            onChange={(e) => setUrl(e.target.value)}
-                                            onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
-                                            placeholder="https://example.com"
-                                            className="w-full bg-white/[0.05] border border-white/[0.15] rounded-2xl py-5 pl-14 pr-52 text-white font-mono text-base focus:outline-none focus:border-emerald-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(16,185,129,0.12)] transition-all duration-200 placeholder:text-gray-500"
-                                        />
-                                    ) : (
-                                        <input
-                                            type="text"
-                                            value={searchQuery}
-                                            onChange={(e) => setSearchQuery(e.target.value)}
-                                            onKeyDown={(e) => e.key === "Enter" && !loading && handleExtract()}
-                                            placeholder="Search for anything (e.g. 'latest AI news')"
-                                            className="w-full bg-white/[0.05] border border-white/[0.15] rounded-2xl py-5 pl-14 pr-52 text-white font-mono text-base focus:outline-none focus:border-cyan-500/50 focus:bg-white/[0.07] focus:shadow-[0_0_30px_rgba(6,182,212,0.12)] transition-all duration-200 placeholder:text-gray-500"
-                                        />
-                                    )}
                                     <button
                                         onClick={handleExtract}
                                         disabled={loading || (mode === "scrape" ? !url.trim() : !searchQuery.trim())}
-                                        className={`absolute right-2.5 top-2.5 bottom-2.5 px-12 rounded-xl font-bold text-base tracking-wide transition-all duration-200 flex items-center space-x-2.5 text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/60 hover:scale-[1.03] active:scale-[0.97] ${
+                                        className={`w-full md:w-auto md:absolute md:right-2.5 md:top-2.5 md:bottom-2.5 py-3 md:py-0 px-6 md:px-12 rounded-xl font-bold text-sm md:text-base tracking-wide transition-all duration-200 flex items-center justify-center space-x-2.5 text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/60 hover:scale-[1.02] md:hover:scale-[1.03] active:scale-[0.97] ${
                                             mode === "scrape" 
                                                 ? "bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 border border-emerald-500/30" 
                                                 : "bg-gradient-to-r from-cyan-600 to-blue-500 hover:from-cyan-500 hover:to-blue-400 border border-cyan-500/30"
                                         } disabled:from-gray-700 disabled:to-gray-700 disabled:opacity-40 disabled:border-transparent`}
                                     >
-                                        {loading ? <Loader2 size={18} className="animate-spin" /> : <ArrowRight size={18} />}
+                                        {loading ? <Loader2 size={16} className="animate-spin md:w-[18px] md:h-[18px]" /> : <ArrowRight size={16} className="md:w-[18px] md:h-[18px]" />}
                                         <span>{loading ? "Extracting..." : "Extract"}</span>
                                     </button>
                                 </div>
