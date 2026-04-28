@@ -305,13 +305,10 @@ html.light body::after {
 
 /* ── Header (light) ────────────────────────────────────────── */
 html.light .header-bar {
-  border-bottom-color: rgba(0, 0, 0, 0.06);
-  background: rgba(255, 255, 255, 0.9);
-}
-
-html.light .nav-pill-container {
-  background: rgba(0, 0, 0, 0.03);
-  border-color: rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 html.light .nav-link {
@@ -320,13 +317,6 @@ html.light .nav-link {
 
 html.light .nav-link:hover {
   color: #1e293b;
-  background: rgba(0, 0, 0, 0.04);
-}
-
-html.light .nav-link-active {
-  color: #0f172a;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 html.light .theme-toggle-btn {

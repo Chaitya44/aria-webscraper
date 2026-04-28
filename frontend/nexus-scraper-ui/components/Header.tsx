@@ -69,28 +69,28 @@ export default function Header() {
 
     return (
         <header className={`sticky top-0 z-[9999] w-full header-bar border-b border-white/[0.06] transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''}`}>
-            <div className="max-w-7xl mx-auto px-6 h-14 flex items-center gap-8">
+            <div className="max-w-7xl mx-auto px-6 h-14 flex items-center gap-6">
                 {/* Left — Logo */}
                 <Link href="/" className="flex items-center group flex-shrink-0">
                     <img
                         src="/aria-nav-logo.png"
                         alt="Aria"
-                        className="h-8 object-contain group-hover:opacity-80 transition-opacity duration-200"
+                        className="h-10 object-contain group-hover:opacity-80 transition-opacity duration-200"
                     />
                 </Link>
 
                 {/* Nav Links */}
-                <nav className="hidden md:flex items-center gap-1">
+                <nav className="hidden md:flex items-center">
                     {[
                         { href: "/", label: "Dashboard" },
                     ].map((link) => (
                         <Link
                             key={link.href}
                             href={link.href}
-                            className={`relative px-3.5 py-1.5 rounded-lg text-[13px] font-semibold transition-all duration-200 ${
+                            className={`relative px-3 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
                                 pathname === link.href
-                                    ? "text-emerald-400 bg-emerald-500/10"
-                                    : "text-gray-400 hover:text-white hover:bg-white/[0.06]"
+                                    ? "text-emerald-400"
+                                    : "text-gray-400 hover:text-white"
                             }`}
                         >
                             {link.label}
