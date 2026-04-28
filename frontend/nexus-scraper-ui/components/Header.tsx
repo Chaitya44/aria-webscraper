@@ -68,35 +68,9 @@ export default function Header() {
     const isDark = theme === "dark";
 
     return (
-        <header className={`sticky top-0 z-[9999] w-full header-bar border-b border-white/[0.06] transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''}`}>
-            <div className="max-w-7xl mx-auto px-6 h-14 grid grid-cols-[1fr_auto_1fr] items-center">
-                {/* Left — Brand Logo */}
-                <div className="flex items-center justify-start">
-                    <Link href="/" className="flex items-center group">
-                        <img
-                            src="/aria-nav-logo.png"
-                            alt="Aria"
-                            className="h-14 object-contain group-hover:opacity-80 transition-opacity duration-200"
-                        />
-                    </Link>
-                </div>
-
-                {/* Center — Dashboard (true center via grid) */}
-                <nav className="hidden md:flex items-center justify-center">
-                    <Link
-                        href="/"
-                        className={`px-5 py-1.5 rounded-xl text-sm font-semibold transition-all duration-200 border ${
-                            pathname === "/"
-                                ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/10"
-                                : "text-gray-400 border-white/[0.08] hover:text-white hover:border-white/[0.15] hover:bg-white/[0.04]"
-                        }`}
-                    >
-                        Dashboard
-                    </Link>
-                </nav>
-
-                {/* Right — Theme + User */}
-                <div className="flex items-center justify-end space-x-3">
+        <div className={`fixed top-0 right-0 z-[9999] p-6 transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''} pointer-events-none`}>
+            {/* Right — Theme + User */}
+            <div className="flex items-center justify-end space-x-3 pointer-events-auto">
                     {/* Theme toggle */}
                     <button
                         onClick={toggleTheme}
@@ -230,6 +204,6 @@ export default function Header() {
                     )}
                 </div>
             </div>
-        </header>
+        </div>
     );
 }

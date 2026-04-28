@@ -586,12 +586,12 @@ export default function NexusDashboard() {
             <div className="orb" style={{ width: 350, height: 350, bottom: -50, right: -50, background: "rgba(6, 182, 212, 0.4)", animationDelay: "-5s" }} />
             <div className="orb" style={{ width: 250, height: 250, top: "40%", right: "20%", background: "rgba(139, 92, 246, 0.3)", animationDelay: "-10s" }} />
 
-            <div className="relative z-10 flex min-h-[calc(100vh-4rem)]" style={{ isolation: 'isolate' }}>
+            <div className="relative z-10 flex min-h-screen" style={{ isolation: 'isolate' }}>
 
                 {/* ── SIDEBAR TOGGLE ─────────────────────────────── */}
                 <button
                     onClick={() => setShowSidebar(v => !v)}
-                    className="hidden lg:flex items-center justify-center w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.08] hover:border-white/[0.12] transition-all duration-200 flex-shrink-0 mt-4 ml-2 self-start sticky top-20 z-20"
+                    className="hidden lg:flex items-center justify-center w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.08] hover:border-white/[0.12] transition-all duration-200 flex-shrink-0 mt-4 ml-2 self-start sticky top-6 z-20"
                     title={showSidebar ? "Hide history" : "Show history"}
                 >
                     {showSidebar ? <PanelLeftClose size={14} className="text-gray-400" /> : <PanelLeft size={14} className="text-gray-400" />}
@@ -600,7 +600,7 @@ export default function NexusDashboard() {
                 {/* ── HISTORY SIDEBAR (left) ──────────────────────── */}
                 {/* sticky so it stays fixed while main content scrolls */}
                 {showSidebar && (
-                <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 border-r border-white/[0.04] history-sidebar sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto">
+                <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 border-r border-white/[0.04] history-sidebar sticky top-0 h-screen overflow-y-auto">
                     <div className="p-4 flex-1 overflow-y-auto">
                     <div className="flex items-center justify-between mb-4 px-1">
                         <div className="flex items-center space-x-2">
