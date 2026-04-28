@@ -481,26 +481,55 @@ _UNIVERSAL_CAP = (
 # ──────────────────────────── Pass 1: Classifier ───────────────────
 
 def _classify_page_sync(preview: str, user_key: str) -> str:
-    """Fast classifier — runs on first 5k chars, returns page_type string."""
+    """Fast classifier — runs on first 5k chars, returns page_type string.
+    Retries once on transient errors. Falls back to GENERAL on any failure."""
+    import time
     client = genai.Client(api_key=user_key)
     prompt = _CLASSIFIER_PROMPT + preview
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=_PageClassification,
-            temperature=0.0,
-            max_output_tokens=64,
-        ),
-    )
-    try:
-        result = json.loads(response.text)
-        page_type = result.get("page_type", "GENERAL").upper()
-        return page_type if page_type in PAGE_TYPES else "GENERAL"
-    except (json.JSONDecodeError, AttributeError):
-        return "GENERAL"
+    max_attempts = 2
+    models_to_try = ["gemini-3.1-flash-lite-preview", "gemini-1.5-flash"]
+
+    for attempt in range(max_attempts):
+        model = models_to_try[min(attempt, len(models_to_try) - 1)]
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=_PageClassification,
+                    temperature=0.0,
+                    max_output_tokens=64,
+                ),
+            )
+
+            # Null guard
+            if response is None or not hasattr(response, 'text') or response.text is None:
+                logger.warning(f"Classifier returned empty response (attempt {attempt+1}, model={model})")
+                if attempt < max_attempts - 1:
+                    time.sleep(1)
+                    continue
+                return "GENERAL"
+
+            result = json.loads(response.text)
+            page_type = result.get("page_type", "GENERAL").upper()
+            return page_type if page_type in PAGE_TYPES else "GENERAL"
+
+        except (json.JSONDecodeError, AttributeError) as exc:
+            logger.warning(f"Classifier JSON parse error (attempt {attempt+1}): {exc}")
+            return "GENERAL"
+
+        except Exception as exc:
+            error_str = str(exc).lower()
+            is_transient = any(k in error_str for k in ("503", "unavailable", "429", "overloaded", "quota"))
+            logger.warning(f"Classifier error (attempt {attempt+1}, model={model}): {exc}")
+            if is_transient and attempt < max_attempts - 1:
+                time.sleep(1.5)
+                continue
+            return "GENERAL"
+
+    return "GENERAL"
 
 
 _classifier_cache: dict[str, str] = {}
