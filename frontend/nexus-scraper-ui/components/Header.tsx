@@ -69,17 +69,18 @@ export default function Header() {
 
     return (
         <header className={`sticky top-0 z-[9999] w-full header-bar border-b border-white/[0.06] transition-opacity duration-300 ${isLocked ? 'pointer-events-none opacity-50' : ''}`}>
-            <div className="max-w-7xl mx-auto px-6 h-14 flex items-center gap-6">
-                {/* Left — Logo */}
+            <div className="max-w-7xl mx-auto px-6 h-14 flex items-center">
+                {/* Left — Brand Logo */}
                 <Link href="/" className="flex items-center group flex-shrink-0">
                     <img
                         src="/aria-nav-logo.png"
                         alt="Aria"
-                        className="h-10 object-contain group-hover:opacity-80 transition-opacity duration-200"
+                        className="h-14 object-contain group-hover:opacity-80 transition-opacity duration-200"
                     />
                 </Link>
 
-                {/* Nav Links */}
+                {/* Center — Dashboard (pushed to center with flex spacers) */}
+                <div className="flex-1" />
                 <nav className="hidden md:flex items-center">
                     {[
                         { href: "/", label: "Dashboard" },
@@ -87,18 +88,16 @@ export default function Header() {
                         <Link
                             key={link.href}
                             href={link.href}
-                            className={`relative px-3 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                            className={`relative px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-200 border ${
                                 pathname === link.href
-                                    ? "text-emerald-400"
-                                    : "text-gray-400 hover:text-white"
+                                    ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/10"
+                                    : "text-gray-400 border-white/[0.08] hover:text-white hover:border-white/[0.15] hover:bg-white/[0.04]"
                             }`}
                         >
                             {link.label}
                         </Link>
                     ))}
                 </nav>
-
-                {/* Spacer */}
                 <div className="flex-1" />
 
                 {/* Right — Theme + User */}
