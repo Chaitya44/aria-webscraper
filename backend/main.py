@@ -34,9 +34,9 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-FIRECRAWL_API_KEY    = os.getenv("FIRECRAWL_API_KEY")
-FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v1/scrape"
-FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v1/search"
+PRIMARY_SCRAPER_API_KEY    = os.getenv("PRIMARY_SCRAPER_API_KEY")
+PRIMARY_SCRAPER_SCRAPE_URL = "https://api.firecrawl.dev/v1/scrape"
+PRIMARY_SCRAPER_SEARCH_URL = "https://api.firecrawl.dev/v1/search"
 
 logger = logging.getLogger("aiwebscraper")
 logging.basicConfig(level=logging.INFO)
@@ -270,21 +270,21 @@ async def fetch_markdown_via_jina(url: str) -> str:
                 return text
             raise HTTPException(status_code=422, detail="Jina AI could not extract content from this page.")
         except httpx.HTTPStatusError:
-            raise HTTPException(status_code=422, detail="Both Firecrawl and Jina AI failed to load this page.")
+            raise HTTPException(status_code=422, detail="Both Primary Scraper and Jina AI failed to load this page.")
         except httpx.RequestError:
             raise HTTPException(status_code=502, detail="Failed to reach Jina AI fallback service.")
 
 
-# ──────────────────────────── Firecrawl Scrape ─────────────────────
+# ──────────────────────────── Primary Scraper Scrape ─────────────────────
 
-async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
+async def fetch_markdown_via_primary_scraper(url: str) -> tuple[str, list[dict]]:
     """Returns (markdown, links_list)."""
-    if not FIRECRAWL_API_KEY:
-        raise HTTPException(status_code=500, detail="Server misconfiguration: FIRECRAWL_API_KEY is not set.")
+    if not PRIMARY_SCRAPER_API_KEY:
+        raise HTTPException(status_code=500, detail="Server misconfiguration: PRIMARY_SCRAPER_API_KEY is not set.")
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {FIRECRAWL_API_KEY}",
+        "Authorization": f"Bearer {PRIMARY_SCRAPER_API_KEY}",
     }
 
     payload: dict = {
@@ -311,7 +311,7 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
-            resp = await client.post(FIRECRAWL_SCRAPE_URL, json=payload, headers=headers)
+            resp = await client.post(PRIMARY_SCRAPER_SCRAPE_URL, json=payload, headers=headers)
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
@@ -323,29 +323,29 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
             if status == 404:
                 raise HTTPException(status_code=404, detail="The target webpage could not be found (404).")
             elif status in (401, 403):
-                raise HTTPException(status_code=status, detail="Access denied by the target website or Firecrawl auth failed.")
+                raise HTTPException(status_code=status, detail="Access denied by the target website or Primary Scraper auth failed.")
             elif status == 402:
-                raise HTTPException(status_code=502, detail="Firecrawl API quota exceeded.")
+                raise HTTPException(status_code=502, detail="Primary Scraper API quota exceeded.")
             elif status in (408, 500, 502, 503):
-                logger.warning(f"Firecrawl returned {status} — falling back to Jina AI")
+                logger.warning(f"Primary Scraper returned {status} — falling back to Jina AI")
                 fallback_md = await fetch_markdown_via_jina(url)
                 return fallback_md, []
             else:
                 raise HTTPException(
                     status_code=status,
-                    detail=f"Firecrawl error {status}: {error_body.get('error', e.response.text[:300])}",
+                    detail=f"Primary Scraper error {status}: {error_body.get('error', e.response.text[:300])}",
                 )
         except httpx.TimeoutException:
-            logger.warning("Firecrawl timed out — falling back to Jina AI")
+            logger.warning("Primary Scraper timed out — falling back to Jina AI")
             fallback_md = await fetch_markdown_via_jina(url)
             return fallback_md, []
         except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"Failed to reach Firecrawl: {str(exc)}")
+            raise HTTPException(status_code=502, detail=f"Failed to reach Primary Scraper: {str(exc)}")
 
     data = resp.json()
     if not data.get("success"):
         error_msg = data.get("error", "")
-        logger.warning(f"Firecrawl success=false: {error_msg} — trying Jina fallback")
+        logger.warning(f"Primary Scraper success=false: {error_msg} — trying Jina fallback")
         fallback_md = await fetch_markdown_via_jina(url)
         return fallback_md, []
 
@@ -354,23 +354,23 @@ async def fetch_markdown_via_firecrawl(url: str) -> tuple[str, list[dict]]:
     links = page_data.get("links", [])
 
     if not markdown:
-        raise HTTPException(status_code=422, detail="Firecrawl returned no content. The page may require login or is empty.")
+        raise HTTPException(status_code=422, detail="Primary Scraper returned no content. The page may require login or is empty.")
 
     return markdown, links
 
 
-# ──────────────────────────── Firecrawl Search ─────────────────────
+# ──────────────────────────── Primary Scraper Search ─────────────────────
 
-async def search_via_firecrawl(query: str) -> list[dict]:
+async def search_via_primary_scraper(query: str) -> list[dict]:
     """
-    Search using Firecrawl /v1/search. Returns the raw results list from Firecrawl.
+    Search using Primary Scraper /v1/search. Returns the raw results list from Primary Scraper.
     """
-    if not FIRECRAWL_API_KEY:
-        raise HTTPException(status_code=500, detail="Server misconfiguration: FIRECRAWL_API_KEY is not set.")
+    if not PRIMARY_SCRAPER_API_KEY:
+        raise HTTPException(status_code=500, detail="Server misconfiguration: PRIMARY_SCRAPER_API_KEY is not set.")
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {FIRECRAWL_API_KEY}",
+        "Authorization": f"Bearer {PRIMARY_SCRAPER_API_KEY}",
     }
 
     payload = {
@@ -384,24 +384,24 @@ async def search_via_firecrawl(query: str) -> list[dict]:
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
-            resp = await client.post(FIRECRAWL_SEARCH_URL, json=payload, headers=headers)
+            resp = await client.post(PRIMARY_SCRAPER_SEARCH_URL, json=payload, headers=headers)
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             raise HTTPException(
                 status_code=status,
-                detail=f"Firecrawl search failed ({status}). Check your API key or query.",
+                detail=f"Primary Scraper search failed ({status}). Check your API key or query.",
             )
         except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"Failed to reach Firecrawl search: {str(exc)}")
+            raise HTTPException(status_code=502, detail=f"Failed to reach Primary Scraper search: {str(exc)}")
 
     data = resp.json()
     if not data.get("success"):
-        raise HTTPException(status_code=502, detail=f"Firecrawl search returned success=false: {data.get('error', '')}")
+        raise HTTPException(status_code=502, detail=f"Primary Scraper search returned success=false: {data.get('error', '')}")
 
     results = data.get("data", [])
     if not results:
-        raise HTTPException(status_code=422, detail=f"Firecrawl search returned no results for: '{query}'")
+        raise HTTPException(status_code=422, detail=f"Primary Scraper search returned no results for: '{query}'")
 
     return results
 
@@ -855,7 +855,7 @@ def fallback_structure_from_markdown(markdown: str, error_msg: str | None = None
 
 # ──────────────────────────── Response Builder ─────────────────────
 
-def _build_structured_result(structured: dict, firecrawl_links: list[dict] | None = None) -> StructuredResult:
+def _build_structured_result(structured: dict, primary_scraper_links: list[dict] | None = None) -> StructuredResult:
     """Normalize a raw dict (from Gemini or fallback) into a validated StructuredResult."""
 
     def safe_str(v) -> str:
@@ -875,9 +875,9 @@ def _build_structured_result(structured: dict, firecrawl_links: list[dict] | Non
             gemini_link_urls.add(l["url"])
             processed_links.append(LinkItem(text=safe_str(l["text"]), url=safe_str(l["url"])))
 
-    # Merge Firecrawl structured links if Gemini missed them
-    if firecrawl_links:
-        for fc in firecrawl_links:
+    # Merge Primary Scraper structured links if Gemini missed them
+    if primary_scraper_links:
+        for fc in primary_scraper_links:
             if isinstance(fc, dict):
                 fc_url = fc.get("url", "")
                 fc_text = fc.get("text", "").strip()
@@ -965,7 +965,7 @@ async def scrape_and_structure(payload: ScrapeRequest):
     """
     Full pipeline:
     1. Rate-limit check (10/day per Gemini key)
-    2. Firecrawl: URL → Markdown + links
+    2. Primary Scraper: URL → Markdown + links
     3. Pass 1: Classifier (5k chars → page_type)
     4. Pass 2: Gemini extractor (schema-aware prompt)
     5. Fallback regex parser if Gemini fails
@@ -975,8 +975,8 @@ async def scrape_and_structure(payload: ScrapeRequest):
     logger.info(f"[v8] scrape-and-structure: {url}")
 
     # Step 1: Scrape
-    raw_markdown, firecrawl_links = await fetch_markdown_via_firecrawl(url)
-    logger.info(f"Firecrawl: {len(raw_markdown)} chars, {len(firecrawl_links)} links")
+    raw_markdown, primary_scraper_links = await fetch_markdown_via_primary_scraper(url)
+    logger.info(f"Primary Scraper: {len(raw_markdown)} chars, {len(primary_scraper_links)} links")
 
     # Step 2: Classify (Pass 1)
     page_type = await classify_page(raw_markdown, payload.user_gemini_key)
@@ -994,7 +994,7 @@ async def scrape_and_structure(payload: ScrapeRequest):
     return ScrapeResponse(
         url=url,
         page_type=page_type,
-        structured_data=_build_structured_result(structured, firecrawl_links),
+        structured_data=_build_structured_result(structured, primary_scraper_links),
         raw_markdown=raw_markdown,
         extraction_warning=extraction_warning,
     )
@@ -1004,7 +1004,7 @@ async def scrape_and_structure(payload: ScrapeRequest):
 async def search_and_structure(payload: SearchRequest):
     """
     Search pipeline (GEMINI BYPASSED):
-    1. Firecrawl search: query → raw organic search items
+    1. Primary Scraper search: query → raw organic search items
     2. Map metadata (title, description, ogImage) into SearchStructuredResponse natively.
     """
     query = payload.query.strip()
@@ -1015,9 +1015,9 @@ async def search_and_structure(payload: SearchRequest):
 
     logger.info(f"[v8] search-and-structure: '{query}' (Gemini bypassed)")
 
-    # Step 1: Search via Firecrawl
-    results = await search_via_firecrawl(query)
-    logger.info(f"Firecrawl search: {len(results)} results for '{query}'")
+    # Step 1: Search via Primary Scraper
+    results = await search_via_primary_scraper(query)
+    logger.info(f"Primary Scraper search: {len(results)} results for '{query}'")
 
     # Step 2: Extract attributes directly into SearchResultItem without Gemini
     search_items = []
@@ -1041,7 +1041,7 @@ async def search_and_structure(payload: SearchRequest):
             ))
 
     structured = SearchStructuredResponse(
-        search_summary="Rich search items directly extracted from organic metadata via Firecrawl web index.",
+        search_summary="Rich search items directly extracted from organic metadata via Primary Scraper web index.",
         results=search_items[:10]  # Cap visual results safely
     )
 

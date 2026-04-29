@@ -16,7 +16,7 @@ Architecture:
     Layer 5  →  Main Orchestration Pipeline           (main)
 
 Dependencies:
-    pip install firecrawl-py google-generativeai tenacity pydantic python-dotenv
+    pip install primary_scraper-py google-generativeai tenacity pydantic python-dotenv
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ from typing import Any, Optional
 # ─────────────────────────────────────────────────────────────────────────────
 import google.generativeai as genai
 from dotenv import load_dotenv
-from firecrawl import FirecrawlApp
+from primary_scraper import Primary ScraperApp
 from pydantic import BaseModel, Field, ValidationError
 from tenacity import (
     retry,
@@ -49,7 +49,7 @@ from tenacity import (
 #  Configuration & Logging
 # ─────────────────────────────────────────────────────────────────────────────
 
-load_dotenv()  # Loads FIRECRAWL_API_KEY and GEMINI_API_KEY from .env
+load_dotenv()  # Loads PRIMARY_SCRAPER_API_KEY and GEMINI_API_KEY from .env
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,12 +60,12 @@ logging.basicConfig(
 logger = logging.getLogger("universal_ai_scraper")
 
 # ─── API Key Validation ────────────────────────────────────────────────────
-_FIRECRAWL_KEY = os.getenv("FIRECRAWL_API_KEY", "")
+_PRIMARY_SCRAPER_KEY = os.getenv("PRIMARY_SCRAPER_API_KEY", "")
 _GEMINI_KEY    = os.getenv("GEMINI_API_KEY", "")
 
-if not _FIRECRAWL_KEY:
+if not _PRIMARY_SCRAPER_KEY:
     raise EnvironmentError(
-        "Missing FIRECRAWL_API_KEY. Add it to your .env file or environment variables."
+        "Missing PRIMARY_SCRAPER_API_KEY. Add it to your .env file or environment variables."
     )
 if not _GEMINI_KEY:
     raise EnvironmentError(
@@ -154,11 +154,11 @@ def extract_raw_dom_data(url: str) -> str:
     # Capturing deferred JSON payloads injected post-render.
     logger.debug("Phase 4 — Network interception layer engaged.")
 
-    # ── Phase 5: DOM Serialisation via FirecrawlApp ───────────────────────────
+    # ── Phase 5: DOM Serialisation via Primary ScraperApp ───────────────────────────
     # Dispatching serialisation request to the distributed rendering cluster.
     # Output format: Markdown (preserves semantic structure without raw HTML noise).
     try:
-        _acquisition_engine = FirecrawlApp(api_key=_FIRECRAWL_KEY)
+        _acquisition_engine = Primary ScraperApp(api_key=_PRIMARY_SCRAPER_KEY)
 
         # Scrape with markdown output format — cleanest signal for downstream NLP
         acquisition_result = _acquisition_engine.scrape_url(
