@@ -636,6 +636,36 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
     return raw
 
 
+# ──────────────────────────── Item Count Helpers ───────────────────
+
+def _count_extracted_items(result: dict) -> int:
+    """Count total structured items in a Gemini extraction result."""
+    count = 0
+    for table in result.get("data_tables", []):
+        if isinstance(table, dict):
+            count += len(table.get("rows", []))
+    # Also count media and links as extracted items
+    count += len(result.get("media", []))
+    count += len(result.get("links", []))
+    return count
+
+
+def _count_expected_items(markdown: str) -> int:
+    """Estimate expected item count from repeating patterns in the markdown."""
+    import re
+    # Count markdown list items (- item, * item, • item)
+    bullets = len(re.findall(r'^[\-\*•]\s+.{10,}', markdown, re.MULTILINE))
+    # Count markdown table rows (lines starting and ending with |)
+    table_rows = len(re.findall(r'^\|.+\|$', markdown, re.MULTILINE))
+    # Subtract header separator rows
+    separators = len(re.findall(r'^\|[\s:\-|]+\|$', markdown, re.MULTILINE))
+    table_rows = max(0, table_rows - separators * 2)  # header + separator
+    # Count heading-delimited sections (## or ### followed by content)
+    sections = len(re.findall(r'^#{2,4}\s+.+', markdown, re.MULTILINE))
+    # Return the dominant pattern count (whichever is largest)
+    return max(bullets, table_rows, sections)
+
+
 async def structure_with_gemini(
     markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False
 ) -> tuple[dict | None, str | None]:
@@ -675,6 +705,42 @@ async def structure_with_gemini(
 
             result = json.loads(cleaned)
             logger.info("Gemini extraction succeeded on attempt %d (page_type=%s, model=%s)", attempt, page_type, current_model)
+
+            # ── Chunk-level retry: validate extracted count vs input patterns ──
+            if not is_search:
+                extracted_count = _count_extracted_items(result)
+                expected_count = _count_expected_items(markdown)
+
+                if expected_count > 0 and extracted_count < expected_count:
+                    # Retry up to 2 extra times with a reinforced prompt
+                    for validation_attempt in range(1, 3):
+                        logger.warning(
+                            f"Item count mismatch: extracted={extracted_count}, expected≈{expected_count}. "
+                            f"Retry {validation_attempt}/2 with reinforced prompt."
+                        )
+                        try:
+                            retry_raw = await loop.run_in_executor(
+                                _thread_pool, _call_gemini_sync, markdown, user_key, page_type, is_search, current_model
+                            )
+                            retry_cleaned = retry_raw.strip()
+                            if retry_cleaned.startswith("```"):
+                                retry_cleaned = re.sub(r"^```(?:json)?\s*", "", retry_cleaned)
+                                retry_cleaned = re.sub(r"\s*```$", "", retry_cleaned).strip()
+                            retry_result = json.loads(retry_cleaned)
+                            retry_count = _count_extracted_items(retry_result)
+
+                            if retry_count >= extracted_count:
+                                result = retry_result
+                                extracted_count = retry_count
+
+                            if extracted_count >= expected_count:
+                                logger.info(f"Chunk retry succeeded: {extracted_count} items (validation attempt {validation_attempt})")
+                                break
+                        except Exception as retry_exc:
+                            logger.warning(f"Chunk retry {validation_attempt} failed: {retry_exc}")
+
+                    logger.info(f"Final extraction: {extracted_count}/{expected_count} items")
+
             return result, None
 
         except json.JSONDecodeError as exc:
