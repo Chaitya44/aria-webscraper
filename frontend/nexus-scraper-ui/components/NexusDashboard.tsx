@@ -959,67 +959,22 @@ export default function NexusDashboard() {
                         )}
                     </AnimatePresence>
 
-                    {/* ── HONEST STOPWATCH LOADER ─────────────────────── */}
+                    {/* ── CANCEL BUTTON (shown only before Aria Engine fires) ── */}
                     <AnimatePresence>
-                        {loading && (
+                        {loading && canCancel && (
                             <motion.div
-                                initial={{ opacity: 0, y: 20, scale: 0.97 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: -10, scale: 0.97 }}
-                                transition={{ type: "spring", stiffness: 200, damping: 24 }}
-                                className="mt-8"
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -10 }}
+                                className="mt-6 flex justify-center"
                             >
-                                <div className="glass-card gradient-border rounded-2xl p-8 md:p-10 flex flex-col items-center text-center space-y-6 glow-emerald">
-                                    {/* Pulsing Radar Icon */}
-                                    <div className="relative">
-                                        <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-xl animate-pulse" style={{ width: 72, height: 72, top: -4, left: -4 }} />
-                                        <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-emerald-500/15 to-cyan-500/15 border border-emerald-500/20 flex items-center justify-center">
-                                            <Radar size={28} className="text-emerald-400 animate-pulse" />
-                                        </div>
-                                    </div>
-
-                                    {/* Large Monospace Timer */}
-                                    <div>
-                                        <p className="text-gray-500 text-xs font-semibold uppercase tracking-widest mb-2">Time Elapsed</p>
-                                        <p className="font-mono text-5xl md:text-6xl font-extrabold tabular-nums text-transparent bg-clip-text bg-gradient-to-r from-emerald-300 via-teal-200 to-cyan-300 drop-shadow-[0_0_16px_rgba(16,185,129,0.3)]">
-                                            {elapsed}<span className="text-2xl md:text-3xl text-emerald-500/60 ml-1">s</span>
-                                        </p>
-                                    </div>
-
-                                    {/* Phase-Aware Helper Text */}
-                                    <p className="text-gray-400 text-sm max-w-md leading-relaxed font-light">
-                                        {elapsed < 20
-                                            ? "Bypassing security and analyzing DOM. Complex sites typically take 30\u201345 seconds."
-                                            : "Scrape successful. Gemini AI is now structuring the raw data..."}
-                                    </p>
-
-                                    {/* Subtle animated progress bar (indeterminate) */}
-                                    <div className="w-full max-w-xs h-1 rounded-full bg-white/[0.04] overflow-hidden">
-                                        <motion.div
-                                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400"
-                                            initial={{ x: "-100%" }}
-                                            animate={{ x: "100%" }}
-                                            transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}
-                                            style={{ width: "40%" }}
-                                        />
-                                    </div>
-
-                                    {/* Cancel Button — only before Aria Engine fires */}
-                                    <AnimatePresence>
-                                        {canCancel && (
-                                            <motion.button
-                                                initial={{ opacity: 0, y: 8 }}
-                                                animate={{ opacity: 1, y: 0 }}
-                                                exit={{ opacity: 0, y: 8 }}
-                                                onClick={cancelExtraction}
-                                                className="relative z-[200] flex items-center space-x-2 px-6 py-2.5 rounded-xl border-2 border-red-500/50 text-red-400 hover:border-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all font-semibold text-sm cursor-pointer"
-                                            >
-                                                <XCircle size={16} />
-                                                <span>Cancel Extraction</span>
-                                            </motion.button>
-                                        )}
-                                    </AnimatePresence>
-                                </div>
+                                <button
+                                    onClick={cancelExtraction}
+                                    className="flex items-center space-x-2 px-6 py-2.5 rounded-xl border-2 border-red-500/50 text-red-400 hover:border-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all font-semibold text-sm cursor-pointer"
+                                >
+                                    <XCircle size={16} />
+                                    <span>Cancel Extraction</span>
+                                </button>
                             </motion.div>
                         )}
                     </AnimatePresence>
