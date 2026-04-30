@@ -576,11 +576,12 @@ async def classify_page(markdown: str, user_key: str) -> str:
 
 SEARCH_SYSTEM_PROMPT = """You are an AI research assistant analyzing web search results. You MUST extract a structured list of the top items, products, or articles mentioned in the text. For every item, extract its title, a short description, the price (if applicable), the image URL, and the link to the item. Do not just summarize the page; you must populate the results array."""
 
-def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-3.1-flash-lite-preview") -> str:
+def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-3.1-flash-lite-preview", strict_count: int = 0) -> str:
     """
     Main extraction call — runs in a thread executor.
     Uses genai.Client (instance-scoped, thread-safe, no global configure() race).
     Strips and truncates content to ~15k chars before sending to Gemini.
+    If strict_count > 0, injects an explicit item count requirement into the prompt.
     """
     client = genai.Client(api_key=user_key)
 
@@ -592,7 +593,15 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
     after_len = len(truncated)
     logger.info(f"[{page_type}] Cleaned {before_len} → {after_len} chars before sending to Gemini ({model})")
 
-    constraint_prompt = "ZERO LOSS MANDATE: Every distinct item, product, listing, or row on the page MUST map to exactly one output entry — do NOT skip, merge, or summarize. Use null for missing fields instead of dropping items. Before finishing, verify your output count matches the input count. Return a maximum of 20 items per array. Be concise with field values. Do not include raw HTML in any field. Keep all string values under 200 characters. Your entire response must be valid complete JSON — never truncate mid-response."
+    constraint_prompt = "ZERO LOSS MANDATE: Every distinct item, product, listing, or row on the page MUST map to exactly one output entry — do NOT skip, merge, or summarize. Use null for missing fields instead of dropping items. Return a maximum of 20 items per array. Be concise with field values. Do not include raw HTML in any field. Keep all string values under 200 characters. Your entire response must be valid complete JSON — never truncate mid-response."
+
+    # Strict count enforcement: inject exact expected count into prompt
+    if strict_count > 0:
+        constraint_prompt += (
+            f" CRITICAL: The system detected EXACTLY {strict_count} distinct items in the input. "
+            f"You previously returned fewer. You MUST now return EXACTLY {strict_count} items in data_tables rows. "
+            f"Do NOT stop early. Do NOT merge items. Count your output before finishing."
+        )
 
     if is_search:
         prompt = f"{SEARCH_SYSTEM_PROMPT}\n\nExtract ALL data from these search results:\n\n{truncated}\n\n{constraint_prompt}"
@@ -706,21 +715,22 @@ async def structure_with_gemini(
             result = json.loads(cleaned)
             logger.info("Gemini extraction succeeded on attempt %d (page_type=%s, model=%s)", attempt, page_type, current_model)
 
-            # ── Chunk-level retry: validate extracted count vs input patterns ──
+            # ── External validation: system rejects mismatched output counts ──
             if not is_search:
                 extracted_count = _count_extracted_items(result)
                 expected_count = _count_expected_items(markdown)
 
                 if expected_count > 0 and extracted_count < expected_count:
-                    # Retry up to 2 extra times with a reinforced prompt
+                    # System-enforced retry — model doesn't grade itself
                     for validation_attempt in range(1, 3):
                         logger.warning(
-                            f"Item count mismatch: extracted={extracted_count}, expected≈{expected_count}. "
-                            f"Retry {validation_attempt}/2 with reinforced prompt."
+                            f"[EXTERNAL VALIDATOR] REJECTED: output={extracted_count} != expected≈{expected_count}. "
+                            f"Re-extracting with strict_count={expected_count} (attempt {validation_attempt}/2)"
                         )
                         try:
                             retry_raw = await loop.run_in_executor(
-                                _thread_pool, _call_gemini_sync, markdown, user_key, page_type, is_search, current_model
+                                _thread_pool, _call_gemini_sync,
+                                markdown, user_key, page_type, is_search, current_model, expected_count
                             )
                             retry_cleaned = retry_raw.strip()
                             if retry_cleaned.startswith("```"):
@@ -729,17 +739,20 @@ async def structure_with_gemini(
                             retry_result = json.loads(retry_cleaned)
                             retry_count = _count_extracted_items(retry_result)
 
-                            if retry_count >= extracted_count:
+                            # Always keep the result with the highest item count
+                            if retry_count > extracted_count:
                                 result = retry_result
                                 extracted_count = retry_count
+                                logger.info(f"[EXTERNAL VALIDATOR] Improved: {retry_count} items (was {extracted_count})")
 
+                            # Accept if we hit or exceeded the target
                             if extracted_count >= expected_count:
-                                logger.info(f"Chunk retry succeeded: {extracted_count} items (validation attempt {validation_attempt})")
+                                logger.info(f"[EXTERNAL VALIDATOR] ACCEPTED: {extracted_count}/{expected_count} items")
                                 break
                         except Exception as retry_exc:
-                            logger.warning(f"Chunk retry {validation_attempt} failed: {retry_exc}")
+                            logger.warning(f"[EXTERNAL VALIDATOR] Retry {validation_attempt} failed: {retry_exc}")
 
-                    logger.info(f"Final extraction: {extracted_count}/{expected_count} items")
+                    logger.info(f"Final extraction: {extracted_count}/{expected_count} items (external validation complete)")
 
             return result, None
 
