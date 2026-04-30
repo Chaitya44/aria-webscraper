@@ -454,7 +454,13 @@ CRITICAL INSTRUCTIONS — violate none:
 
 9. Output ONLY raw, parseable JSON. Do not wrap it in ```json fences or any markdown block. No commentary, no explanation.
 
-10. If a field has no data, return an empty array [].\
+10. If a field has no data, return an empty array [].
+
+ZERO DATA LOSS RULES:
+11. ONE-TO-ONE MAPPING: Each input item MUST produce exactly one output object. Do NOT skip, merge, or summarize items. If the page has N products/listings/cards/rows, your output MUST contain exactly N entries in data_tables rows.
+12. HANDLE MISSING DATA: Use null or empty string "" for missing fields — never drop an item because some fields are absent.
+13. CONSISTENCY: All objects in an array must have identical keys.
+14. VALIDATION: Before finishing, verify output item count matches input item count. If mismatch, go back and add the missing items.\
 """
 
 # Extra instruction injected for DIRECTORY pages to prevent JSON truncation
@@ -586,7 +592,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
     after_len = len(truncated)
     logger.info(f"[{page_type}] Cleaned {before_len} → {after_len} chars before sending to Gemini ({model})")
 
-    constraint_prompt = "Return a maximum of 20 items. Be concise with field values. Do not include raw HTML in any field. Keep all string values under 200 characters. If you near the 64K token output limit, prioritize structural integrity over exhaustive paragraph extraction, ensuring the JSON remains valid and closed. Your entire response must be valid complete JSON — never truncate mid-response."
+    constraint_prompt = "ZERO LOSS MANDATE: Every distinct item, product, listing, or row on the page MUST map to exactly one output entry — do NOT skip, merge, or summarize. Use null for missing fields instead of dropping items. Before finishing, verify your output count matches the input count. Return a maximum of 20 items per array. Be concise with field values. Do not include raw HTML in any field. Keep all string values under 200 characters. Your entire response must be valid complete JSON — never truncate mid-response."
 
     if is_search:
         prompt = f"{SEARCH_SYSTEM_PROMPT}\n\nExtract ALL data from these search results:\n\n{truncated}\n\n{constraint_prompt}"
