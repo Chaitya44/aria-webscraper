@@ -79,32 +79,21 @@ genai.configure(api_key=_GEMINI_KEY)
 #  Pydantic Output Schema
 # ─────────────────────────────────────────────────────────────────────────────
 
-class BirthDetails(BaseModel):
-    """Validated birth information block."""
-    date:        Optional[str] = Field(None, description="ISO-formatted birth date, e.g. 1993-03-15")
-    place:       Optional[str] = Field(None, description="City or region of birth")
-    age:         Optional[str] = Field(None, description="Current age as a string, e.g. '33'")
-
-
-class FamilyMember(BaseModel):
-    """A single family member entry."""
-    relation:    str           = Field(..., description="Relationship label, e.g. 'Father'")
-    name:        str           = Field(..., description="Full name of the family member")
-
-
-class ExtractedEntity(BaseModel):
+class ExtractedItem(BaseModel):
     """
-    Top-level validated entity schema.
-    Represents a person, product, or named entity extracted from a web page.
-    Extend or replace fields to match your specific use-case.
+    A single extracted structured data item (product, listing, card, etc.).
     """
-    name:         Optional[str]              = Field(None, description="Full canonical name of the entity")
-    profession:   Optional[list[str]]        = Field(default_factory=list, description="List of occupations or roles")
-    birth_details: Optional[BirthDetails]   = Field(None, description="Structured birth information")
-    nationality:  Optional[str]              = Field(None, description="Country or nationality")
-    known_for:    Optional[list[str]]        = Field(default_factory=list, description="Notable works, achievements, or associations")
-    family:       Optional[list[FamilyMember]] = Field(default_factory=list, description="Key family relationships")
-    source_url:   Optional[str]              = Field(None, description="The originating URL that was scraped")
+    title: str = Field(..., description="Title or name of the item")
+    price: Optional[str] = Field(None, description="Price of the item, if available")
+    description: Optional[str] = Field(None, description="Short description")
+    attributes: dict[str, Any] = Field(default_factory=dict, description="Relevant attributes (category, rating, etc.)")
+
+class ExtractionResult(BaseModel):
+    """
+    Top-level validated entity schema wrapping the array of items.
+    """
+    items: list[ExtractedItem] = Field(default_factory=list, description="List of all extracted items")
+    source_url: Optional[str] = Field(None, description="The originating URL that was scraped")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -263,37 +252,41 @@ def pre_clean_markdown(raw_markdown: str) -> str:
 
 # System prompt — strict data parsing persona with explicit formatting rules
 _SYSTEM_PROMPT = """\
-You are a strict data parsing pipeline. Your job is to convert raw, messy Markdown into clean, structured JSON matching the provided schema.
+You are an advanced data extraction pipeline designed to extract ALL structured data items from the provided HTML/Markdown content.
 
-RULES — follow every rule without exception:
+STRICT RULES:
+* Do NOT stop after partial extraction.
+* Continue until ALL possible items are extracted.
+* Prefer completeness over brevity.
+* No explanations, no markdown, only JSON.
 
-1. OUTPUT FORMAT
-   Return ONLY the raw JSON object. Do not wrap it in ```json backticks or any markdown code block.
-   Do not include explanations, apologies, or commentary. Just the JSON.
+TASK:
+Identify and extract repeating patterns or structured entities such as:
+* products
+* listings
+* cards
+* rows
+* sections with similar patterns
 
-2. SCHEMA COMPLIANCE
-   Your output must be a single JSON object that exactly matches the field names and structure defined in the schema.
-   If a field cannot be found in the content, set its value to null (for strings/objects) or [] (for arrays).
-   Never invent or hallucinate data not present in the source.
+OUTPUT FORMAT:
+Return ONLY the raw JSON object matching the target schema.
+Do not wrap it in ```json backticks or any markdown code block.
 
-3. CLEAN MARKDOWN LINKS
-   Do not output raw markdown links. If you encounter a pattern like [Text](URL "Title"), extract ONLY the readable 'Text'.
-   Example: [Ranbir Kapoor](https://en.wikipedia.org/wiki/Ranbir_Kapoor) → "Ranbir Kapoor"
-   Drop all URLs completely. Never include http, https, or any URL fragment in the output.
+EXTRACTION LOGIC:
+* Detect repeating patterns in structure.
+* Do not skip similar elements.
+* If multiple items share structure, extract ALL of them.
+* Do not summarize lists into one item.
 
-4. FORMAT DATES AND TEXT
-   Clean up messy concatenations that Wikipedia and similar sites produce.
-   Example input:  "(1993-03-15) 15 March 1993 (age 33)[Bombay, Maharashtra, India]"
-   Example output: { "date": "1993-03-15", "place": "Bombay, Maharashtra, India", "age": "33" }
-   Always normalize dates to ISO 8601 format (YYYY-MM-DD) when possible.
+ANTI-PREMATURE STOP:
+Before finishing, verify:
+* Have all repeated structures been processed?
+* Are there more similar elements not yet extracted?
+If YES -> continue extraction.
 
-5. LISTS
-   For array fields (profession, known_for, family), extract all found values as a clean JSON array of strings or objects.
-   Strip bullet characters (•, -, *) and markdown formatting from list items.
-
-6. ENCODING
-   Output must be valid UTF-8 JSON. Escape special characters properly.
-   Do not include raw Unicode escape sequences unless necessary.
+CONTEXT LIMIT HANDLING:
+* Ignore irrelevant sections (navbars, footers, ads).
+* Focus only on main content blocks.
 """
 
 # Gemini generation configuration — force JSON MIME type for guaranteed structured output
@@ -423,7 +416,7 @@ Apply all system rules: clean links, format dates, strip markdown, no code block
 #  Layer 4 — Pydantic Schema Validation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def validate_output(raw_dict: dict, source_url: str) -> ExtractedEntity:
+def validate_output(raw_dict: dict, source_url: str) -> ExtractionResult:
     """
     Validate and coerce the raw parsed dictionary against the Pydantic schema.
 
@@ -434,7 +427,7 @@ def validate_output(raw_dict: dict, source_url: str) -> ExtractedEntity:
         source_url: The original URL used for extraction.
 
     Returns:
-        A validated ExtractedEntity Pydantic model instance.
+        A validated ExtractionResult Pydantic model instance.
 
     Raises:
         ValidationError: If the model output fails Pydantic field validation.
@@ -443,8 +436,8 @@ def validate_output(raw_dict: dict, source_url: str) -> ExtractedEntity:
     raw_dict["source_url"] = source_url  # Inject provenance field
 
     try:
-        entity = ExtractedEntity(**raw_dict)
-        logger.info("✅  Validation passed — entity: %s", entity.name or "Unknown")
+        entity = ExtractionResult(**raw_dict)
+        logger.info("✅  Validation passed — extracted %d items", len(entity.items))
         return entity
     except ValidationError as ve:
         logger.error("❌  Pydantic validation failed:\n%s", ve)
@@ -476,24 +469,17 @@ def main(url: Optional[str] = None) -> None:
         logger.info("Using URL: %s", url)
 
     # ── Define Target Extraction Schema ───────────────────────────────────────
-    # This JSON schema acts as both a model instruction and a Pydantic target.
-    # Modify fields here to scrape different entity types (products, companies, etc.)
     expected_schema = {
-        "name": "string — Full canonical name of the entity",
-        "profession": ["string — List of roles or occupations"],
-        "birth_details": {
-            "date":  "string — ISO date e.g. 1993-03-15",
-            "place": "string — City/region of birth",
-            "age":   "string — Current age as number string",
-        },
-        "nationality": "string — Country or nationality",
-        "known_for":   ["string — Notable works, achievements"],
-        "family": [
+        "items": [
             {
-                "relation": "string — e.g. Father, Mother, Spouse",
-                "name":     "string — Full name",
+                "title": "string",
+                "price": "string (if available)",
+                "description": "string",
+                "attributes": {
+                    "key": "value"
+                }
             }
-        ],
+        ]
     }
 
     print("\n" + "═" * 64)
