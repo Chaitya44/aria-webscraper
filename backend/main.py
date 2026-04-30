@@ -656,9 +656,11 @@ def _call_gemini_v1_pro_sync(prompt: str, api_key: str) -> str:
 
 def _call_gemini_v1_http_sync(prompt: str, api_key: str, model: str = "gemini-3.1-pro-preview") -> str:
     """
-    Generic raw HTTP call to any Gemini model via the v1 REST endpoint.
+    Generic raw HTTP call to any Gemini model via the REST endpoint.
+    Auto-selects v1beta for preview models, v1 for stable models.
     """
-    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
+    api_version = "v1beta" if "preview" in model else "v1"
+    url = f"https://generativelanguage.googleapis.com/{api_version}/models/{model}:generateContent?key={api_key}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -667,7 +669,7 @@ def _call_gemini_v1_http_sync(prompt: str, api_key: str, model: str = "gemini-3.
         },
     }
 
-    logger.info(f"[{model}] Sending request via raw HTTP v1 endpoint...")
+    logger.info(f"[{model}] Sending request via raw HTTP {api_version} endpoint...")
     response = httpx.post(url, json=payload, timeout=120.0)
 
     if response.status_code == 401 or response.status_code == 403:
