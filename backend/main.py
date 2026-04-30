@@ -411,7 +411,16 @@ async def search_via_primary_scraper(query: str) -> list[dict]:
 GEMINI_SYSTEM_PROMPT = """\
 You are an expert data extraction assistant. Analyze the provided Markdown content from a web page and extract structured information exhaustively.
 
-Return a strictly valid JSON object with EXACTLY these fields:
+EXTRACTION STRATEGY — MANDATORY TWO-PHASE APPROACH:
+
+PHASE 1 — CHUNKING (internal, do NOT output this):
+Before extracting, mentally split the content into logical sections based on headings and topic changes.
+Each section = one chunk. Do NOT merge multiple sections. Do NOT split a section in the middle.
+For each chunk, identify: section_title, all headings, paragraphs, media, links, and repeating data patterns within it.
+Ignore navigation menus, ads, footers, and repeated site-wide links — focus only on main content blocks.
+
+PHASE 2 — STRUCTURING (output this):
+Process EVERY chunk from Phase 1 and combine results into a single JSON object with EXACTLY these fields:
 
 {
   "page_title": "The main title or name of the page (from H1 or the first heading)",
@@ -427,7 +436,7 @@ Return a strictly valid JSON object with EXACTLY these fields:
   "external_links": ["array of unique external http/https URLs found in content"],
   "data_tables": [
     {
-      "title": "Table name/context",
+      "title": "Section/Table name — use the section_title from Phase 1 as context",
       "headers": ["Column1", "Column2"],
       "rows": [["value1", "value2"]]
     }
@@ -438,7 +447,7 @@ CRITICAL INSTRUCTIONS — violate none:
 
 1. BE EXHAUSTIVE: Do not summarize lists. Extract EVERY single image, EVERY link, and EVERY row of data you can find. Never output "..." or "etc" to cut corners. If a page has 50 paragraphs, return all 50.
 
-2. DATA TABLES: Aggressively group repeating patterns (pricing, specs, feature lists, reviews, product grids, cast lists, FAQs, comparison tables) into the data_tables array.
+2. DATA TABLES: Aggressively group repeating patterns (pricing, specs, feature lists, reviews, product grids, cast lists, FAQs, comparison tables) into the data_tables array. Use the section heading as the table title for context.
 
 3. CLEAN MARKDOWN LINKS: Never output raw markdown like [Text](URL). For the links array, extract the visible text as "text" and the URL as "url". Example: [Leonardo DiCaprio](https://...) → {"text": "Leonardo DiCaprio", "url": "https://..."}.
 
@@ -460,7 +469,7 @@ ZERO DATA LOSS RULES:
 11. ONE-TO-ONE MAPPING: Each input item MUST produce exactly one output object. Do NOT skip, merge, or summarize items. If the page has N products/listings/cards/rows, your output MUST contain exactly N entries in data_tables rows.
 12. HANDLE MISSING DATA: Use null or empty string "" for missing fields — never drop an item because some fields are absent.
 13. CONSISTENCY: All objects in an array must have identical keys.
-14. VALIDATION: Before finishing, verify output item count matches input item count. If mismatch, go back and add the missing items.\
+14. SECTION COMPLETENESS: Every section identified in Phase 1 MUST have its content represented in the output. No section may be skipped or compressed. Verify all sections are covered before finishing.\
 """
 
 # Extra instruction injected for DIRECTORY pages to prevent JSON truncation
