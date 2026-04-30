@@ -497,7 +497,7 @@ def _classify_page_sync(preview: str, user_key: str) -> str:
     prompt = _CLASSIFIER_PROMPT + preview
 
     max_attempts = 2
-    models_to_try = ["gemini-3.1-flash-lite-preview", "gemini-1.5-flash"]
+    models_to_try = ["gemini-3.1-flash-lite-preview", "gemini-3-flash-preview"]
 
     for attempt in range(max_attempts):
         model = models_to_try[min(attempt, len(models_to_try) - 1)]
@@ -729,8 +729,8 @@ async def structure_with_gemini(
             ))
             if is_transient and attempt < max_retries:
                 if current_model == "gemini-3.1-flash-lite-preview" and any(k in error_lower for k in ("503", "429", "quota", "exhausted", "unavailable")):
-                    logger.warning("Falling back to gemini-1.5-flash due to preview model capacity/availability limits")
-                    current_model = "gemini-1.5-flash"
+                    logger.warning("Falling back to gemini-3-flash-preview due to preview model capacity/availability limits")
+                    current_model = "gemini-3-flash-preview"
                 delay = base_delay * (2 ** (attempt - 1))
                 logger.warning(f"Transient error — retrying in {delay}s (attempt {attempt+1}/{max_retries})...")
                 await asyncio.sleep(delay)
