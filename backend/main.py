@@ -662,10 +662,22 @@ def _count_extracted_items(result: dict) -> int:
     for table in result.get("data_tables", []):
         if isinstance(table, dict):
             count += len(table.get("rows", []))
-    # Also count media and links as extracted items
     count += len(result.get("media", []))
     count += len(result.get("links", []))
     return count
+
+
+def _count_input_sections(markdown: str) -> int:
+    """Count distinct content sections in markdown by H2/H3 headings."""
+    headings = re.findall(r'^#{2,3}\s+.+', markdown, re.MULTILINE)
+    return len(headings)
+
+
+def _count_output_sections(result: dict) -> int:
+    """Count sections represented in the output (data_tables + headings array)."""
+    table_count = len(result.get("data_tables", []))
+    heading_count = len(result.get("headings", []))
+    return max(table_count, heading_count)
 
 
 def _count_expected_items(markdown: str) -> int:
@@ -761,7 +773,37 @@ async def structure_with_gemini(
                         except Exception as retry_exc:
                             logger.warning(f"[EXTERNAL VALIDATOR] Retry {validation_attempt} failed: {retry_exc}")
 
-                    logger.info(f"Final extraction: {extracted_count}/{expected_count} items (external validation complete)")
+                    logger.info(f"Final item extraction: {extracted_count}/{expected_count} items (external validation complete)")
+
+                # ── Section-level external check ──
+                input_sections = _count_input_sections(markdown)
+                output_sections = _count_output_sections(result)
+
+                if input_sections > 0 and output_sections < input_sections:
+                    logger.warning(
+                        f"[SECTION VALIDATOR] Section mismatch: input={input_sections}, output={output_sections}. Retrying..."
+                    )
+                    try:
+                        section_retry_raw = await loop.run_in_executor(
+                            _thread_pool, _call_gemini_sync,
+                            markdown, user_key, page_type, is_search, current_model, input_sections
+                        )
+                        section_cleaned = section_retry_raw.strip()
+                        if section_cleaned.startswith("```"):
+                            section_cleaned = re.sub(r"^```(?:json)?\s*", "", section_cleaned)
+                            section_cleaned = re.sub(r"\s*```$", "", section_cleaned).strip()
+                        section_result = json.loads(section_cleaned)
+                        new_output_sections = _count_output_sections(section_result)
+
+                        if new_output_sections > output_sections:
+                            result = section_result
+                            logger.info(f"[SECTION VALIDATOR] Improved: {new_output_sections} sections (was {output_sections})")
+                        else:
+                            logger.info(f"[SECTION VALIDATOR] No improvement: {new_output_sections} sections")
+                    except Exception as sec_exc:
+                        logger.warning(f"[SECTION VALIDATOR] Retry failed: {sec_exc}")
+                else:
+                    logger.info(f"[SECTION VALIDATOR] OK: {output_sections}/{input_sections} sections")
 
             return result, None
 
