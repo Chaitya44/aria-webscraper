@@ -1306,6 +1306,51 @@ export default function NexusDashboard() {
                         </>
                             )}
                         </AnimatePresence>
+
+                        {/* ── RAW EXTRACTED DATA (Firecrawl) ─────────────── */}
+                        {result && result.raw_markdown && (
+                            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
+                                <div className="flex items-center justify-between mb-3">
+                                    <div className="flex items-center space-x-2">
+                                        <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                                        <h2 className="text-sm font-bold text-white tracking-wider uppercase">Raw Extracted Data</h2>
+                                        <span className="text-[10px] text-gray-500 bg-white/[0.04] px-2 py-0.5 rounded-full">
+                                            {result.raw_markdown.length.toLocaleString()} chars
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        <button
+                                            onClick={() => {
+                                                const blob = new Blob([result.raw_markdown], { type: "text/markdown" });
+                                                downloadBlob(blob, `raw_data_${new Date().toISOString().slice(0, 10)}.md`);
+                                            }}
+                                            className="text-[10px] text-gray-500 hover:text-cyan-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1"
+                                        >
+                                            <Download size={11} /><span>Download MD</span>
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                const blob = new Blob([result.raw_markdown], { type: "text/plain" });
+                                                downloadBlob(blob, `raw_data_${new Date().toISOString().slice(0, 10)}.txt`);
+                                            }}
+                                            className="text-[10px] text-gray-500 hover:text-cyan-400 bg-white/[0.03] hover:bg-white/[0.06] px-2.5 py-1.5 rounded-lg border border-white/[0.05] transition-all font-medium flex items-center space-x-1"
+                                        >
+                                            <Download size={11} /><span>Download TXT</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <details className="group">
+                                    <summary className="cursor-pointer text-xs text-gray-500 hover:text-cyan-400 transition-colors select-none mb-2">
+                                        Click to expand raw data ▸
+                                    </summary>
+                                    <div className="glass-card rounded-xl p-4 max-h-[500px] overflow-y-auto">
+                                        <pre className="text-[11px] text-gray-400 whitespace-pre-wrap break-words font-mono leading-relaxed">
+                                            {result.raw_markdown}
+                                        </pre>
+                                    </div>
+                                </details>
+                            </motion.div>
+                        )}
                     </div>
 
                     {/* ── EMPTY STATE ──────────────────────────────────── */}

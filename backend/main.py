@@ -606,7 +606,7 @@ async def classify_page(markdown: str, user_key: str) -> str:
 
 SEARCH_SYSTEM_PROMPT = """You are an AI research assistant analyzing web search results. You MUST extract a structured list of the top items, products, or articles mentioned in the text. For every item, extract its title, a short description, the price (if applicable), the image URL, and the link to the item. Do not just summarize the page; you must populate the results array."""
 
-def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-3.1-pro-preview", strict_count: int = 0) -> str:
+def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-3.1-flash", strict_count: int = 0) -> str:
     """
     Main extraction call — runs in a thread executor.
     Routes gemini-3.1-pro to raw HTTP v1 endpoint; all other models use the SDK.
@@ -810,8 +810,8 @@ async def structure_with_gemini(
     raw_text: str = ""
     cleaned: str = ""
 
-    # 4-tier model fallback chain
-    _FALLBACK_CHAIN = ["gemini-3.1-pro-preview", "gemini-3.1-flash", "gemini-3.1-flash-lite-preview", "gemini-1.5-pro"]
+    # 3-tier model fallback chain (flash-first for reliability)
+    _FALLBACK_CHAIN = ["gemini-3.1-flash", "gemini-3.1-flash-lite-preview", "gemini-1.5-pro"]
     current_model = _FALLBACK_CHAIN[0]
     fallback_index = 0
 
