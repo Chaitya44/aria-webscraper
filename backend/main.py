@@ -609,14 +609,11 @@ SEARCH_SYSTEM_PROMPT = """You are an AI research assistant analyzing web search 
 def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-3.1-pro", strict_count: int = 0) -> str:
     """
     Main extraction call — runs in a thread executor.
-    Uses genai.Client (instance-scoped, thread-safe, no global configure() race).
-    Strips and truncates content to ~15k chars before sending to Gemini.
+    Routes gemini-3.1-pro to raw HTTP v1 endpoint; all other models use the SDK.
+    Strips and truncates content before sending.
     If strict_count > 0, injects an explicit item count requirement into the prompt.
     """
-    client = genai.Client(api_key=user_key)
-
     cleaned = _pre_clean_markdown(markdown)
-    # Hard limit: after heavy stripping, target 10,000 chars for Gemini
     truncated = _smart_truncate(cleaned, max_chars=10_000)
 
     before_len = len(markdown)
@@ -625,7 +622,6 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
 
     constraint_prompt = "ZERO LOSS MANDATE: Extract ALL structure types — articles, items, tables, code blocks — do NOT classify the page as only one type. Every distinct item, product, listing, or row MUST map to exactly one output entry. Preserve ALL paragraphs and list items without summarizing. Use null for missing fields instead of dropping items. Return a maximum of 20 items per data_table array. Be concise with field values. Do not include raw HTML. Keep string values under 200 characters. Your entire response must be valid complete JSON — never truncate."
 
-    # Strict count enforcement: inject exact expected count into prompt
     if strict_count > 0:
         constraint_prompt += (
             f" CRITICAL: The system detected EXACTLY {strict_count} distinct items in the input. "
@@ -635,10 +631,80 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
 
     if is_search:
         prompt = f"{SEARCH_SYSTEM_PROMPT}\n\nExtract ALL data from these search results:\n\n{truncated}\n\n{constraint_prompt}"
-        schema = SearchStructuredResponse
     else:
         prompt = f"{GEMINI_SYSTEM_PROMPT}{_UNIVERSAL_CAP}\n\nExtract ALL data from this web page markdown:\n\n{truncated}\n\n{constraint_prompt}"
-        schema = StructuredResult
+
+    # ── Route: gemini-3.1-pro → raw HTTP v1 endpoint ──
+    if model == "gemini-3.1-pro":
+        return _call_gemini_v1_pro_sync(prompt, user_key)
+
+    # ── Route: all other models → SDK ──
+    return _call_gemini_sdk_sync(prompt, user_key, model, is_search)
+
+
+def _call_gemini_v1_pro_sync(prompt: str, api_key: str) -> str:
+    """
+    Raw HTTP call to Gemini 3.1 Pro via the v1 REST endpoint.
+    Does NOT use the genai SDK — avoids v1beta conflicts.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.1-pro:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.1,
+            "maxOutputTokens": 8192,
+        },
+    }
+
+    logger.info("[gemini-3.1-pro] Sending request via raw HTTP v1 endpoint...")
+    response = httpx.post(url, json=payload, timeout=120.0)
+
+    if response.status_code == 401 or response.status_code == 403:
+        raise ValueError(f"Invalid or unauthorized Gemini API key (HTTP {response.status_code})")
+    if response.status_code == 404:
+        raise ValueError(f"Model gemini-3.1-pro not found (HTTP 404). May require API key upgrade or region change.")
+    if response.status_code == 429:
+        raise ValueError(f"Gemini quota exceeded (HTTP 429). Try again later.")
+    if response.status_code >= 500:
+        raise ValueError(f"Gemini server error (HTTP {response.status_code}). Service may be temporarily unavailable.")
+    if response.status_code != 200:
+        detail = response.text[:300] if response.text else "No details"
+        raise ValueError(f"Gemini HTTP error {response.status_code}: {detail}")
+
+    data = response.json()
+
+    # Safety block check
+    candidates = data.get("candidates", [])
+    if not candidates:
+        block_reason = data.get("promptFeedback", {}).get("blockReason", "UNKNOWN")
+        raise ValueError(f"Gemini returned no candidates. Possibly blocked (reason: {block_reason}).")
+
+    candidate = candidates[0]
+    finish_reason = candidate.get("finishReason", "")
+
+    if finish_reason == "SAFETY":
+        raise ValueError("Gemini blocked this content due to safety filters.")
+
+    parts = candidate.get("content", {}).get("parts", [])
+    if not parts or "text" not in parts[0]:
+        raise ValueError(f"Gemini returned empty content (finishReason: {finish_reason}).")
+
+    raw = parts[0]["text"]
+    if not raw or not raw.strip():
+        raise ValueError("Gemini returned empty text response.")
+
+    logger.info(f"[gemini-3.1-pro] HTTP response OK — {len(raw)} chars received")
+    return raw
+
+
+def _call_gemini_sdk_sync(prompt: str, user_key: str, model: str, is_search: bool = False) -> str:
+    """
+    SDK-based call for Flash and other non-Pro models.
+    Uses genai.Client (instance-scoped, thread-safe).
+    """
+    client = genai.Client(api_key=user_key)
+    schema = SearchStructuredResponse if is_search else StructuredResult
 
     response = client.models.generate_content(
         model=model,
@@ -647,12 +713,12 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
             response_mime_type="application/json",
             response_schema=schema,
             temperature=0.1,
-            max_output_tokens=65536,
+            max_output_tokens=8192,
             thinking_config={"include_thoughts": True}
         ),
     )
 
-    # Null guard: check for empty/blocked response
+    # Null guard
     if response is None:
         raise ValueError("Gemini returned a None response object — possibly overloaded.")
     if not hasattr(response, 'text') or response.text is None:
@@ -723,9 +789,8 @@ async def structure_with_gemini(
     """
     Run Gemini extraction in a thread pool.
     Returns (result_dict, error_message).
-    error_message is None on success, or a human-readable reason on failure.
+    3-tier fallback: gemini-3.1-pro (HTTP v1) → gemini-3.1-flash (SDK) → gemini-3.1-flash-lite-preview (SDK).
     JSON parsing wrapped in try/except with partial-JSON recovery.
-    Falls back to gemini-2.0-flash after 2 primary failures on gemini-2.5-flash.
     """
     max_retries = 4
     base_delay = 3
@@ -733,14 +798,17 @@ async def structure_with_gemini(
     raw_text: str = ""
     cleaned: str = ""
 
-    # Primary model: gemini-3.1-pro; after 2 failures try gemini-3.1-flash-lite-preview
-    current_model = "gemini-3.1-pro"
+    # 3-tier model fallback chain
+    _FALLBACK_CHAIN = ["gemini-3.1-pro", "gemini-3.1-flash", "gemini-3.1-flash-lite-preview"]
+    current_model = _FALLBACK_CHAIN[0]
+    fallback_index = 0
 
     for attempt in range(1, max_retries + 1):
-        # Switch to fallback model after 2 consecutive failures
-        if attempt == 3 and current_model == "gemini-3.1-pro":
-            logger.warning("Switching to fallback model gemini-3.1-flash-lite-preview after 2 failures.")
-            current_model = "gemini-3.1-flash-lite-preview"
+        # Progressive fallback after consecutive failures
+        if attempt == 3 and fallback_index < len(_FALLBACK_CHAIN) - 1:
+            fallback_index += 1
+            current_model = _FALLBACK_CHAIN[fallback_index]
+            logger.warning(f"Switching to fallback model {current_model} after {attempt-1} failures.")
 
         try:
             loop = asyncio.get_event_loop()
@@ -869,27 +937,33 @@ async def structure_with_gemini(
             logger.warning(f"Gemini attempt {attempt}/{max_retries} error ({current_model}): {exc}")
 
             # Auth errors — surface immediately
-            if any(k in error_lower for k in ("api key", "api_key", "authenticate", "permission denied", "invalid")):
+            if any(k in error_lower for k in ("api key", "api_key", "authenticate", "permission denied", "invalid", "unauthorized")):
                 return None, f"Invalid or missing Gemini API key. Please update your key in settings. ({exc})"
-
-            # Region/access/model errors
-            if any(k in error_lower for k in ("user location", "not supported", "not found")):
-                return None, f"Model not supported for this API key tier/region. Updates to the API key may be required. ({exc})"
 
             # Safety block
             if "safety" in error_lower or "blocked" in error_lower:
                 return None, f"Gemini blocked this request due to safety filters. ({exc})"
 
-            # Transient errors — retry with backoff
+            # Region/model-not-found errors — fallback to next model instead of hard failure
+            if any(k in error_lower for k in ("user location", "not supported", "not found", "404")):
+                if fallback_index < len(_FALLBACK_CHAIN) - 1:
+                    fallback_index += 1
+                    current_model = _FALLBACK_CHAIN[fallback_index]
+                    logger.warning(f"Model not available — falling back to {current_model}")
+                    continue
+                return None, f"No available models for this API key/region. ({exc})"
+
+            # Transient errors — retry with backoff and progressive fallback
             is_transient = any(k in error_lower for k in (
                 "503", "unavailable", "429", "resource", "overloaded", "quota", "exhausted"
             ))
             if is_transient and attempt < max_retries:
-                if current_model == "gemini-3.1-pro" and any(k in error_lower for k in ("503", "429", "quota", "exhausted", "unavailable")):
-                    logger.warning("Falling back to gemini-3.1-flash-lite-preview due to model capacity/availability limits")
-                    current_model = "gemini-3.1-flash-lite-preview"
+                if fallback_index < len(_FALLBACK_CHAIN) - 1:
+                    fallback_index += 1
+                    current_model = _FALLBACK_CHAIN[fallback_index]
+                    logger.warning(f"Transient error — falling back to {current_model}")
                 delay = base_delay * (2 ** (attempt - 1))
-                logger.warning(f"Transient error — retrying in {delay}s (attempt {attempt+1}/{max_retries})...")
+                logger.warning(f"Retrying in {delay}s (attempt {attempt+1}/{max_retries}, model={current_model})...")
                 await asyncio.sleep(delay)
                 continue
             break
