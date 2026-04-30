@@ -651,7 +651,6 @@ def _call_gemini_v1_pro_sync(prompt: str, api_key: str) -> str:
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "responseMimeType": "application/json",
             "temperature": 0.1,
             "maxOutputTokens": 8192,
         },
