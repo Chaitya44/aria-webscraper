@@ -473,6 +473,19 @@ CRITICAL INSTRUCTIONS — violate none:
 
 10. If a field has no data, return an empty array [].
 
+PRIORITY RULES — extract in this order:
+P1. Main content sections first (headings, core article text, paragraphs).
+P2. Structured data next (repeated items, product listings, data tables).
+P3. Media and links.
+P4. Code blocks — only if they contain meaningful content (not boilerplate/config snippets).
+If nearing output limits, sacrifice P4 before P3, P3 before P2. Never sacrifice P1 or P2.
+
+QUALITY CONTROL:
+Q1. Do NOT duplicate similar content. If the same text appears in both a heading and a paragraph, include it only once (in headings).
+Q2. Do NOT extract navigation menus, site-wide footers, cookie banners, or repeated sidebar links.
+Q3. Do NOT extract ad blocks or promotional banners unrelated to the page's main content.
+Q4. Keep output clean and relevant — completeness means capturing all MEANINGFUL data, not all noise.
+
 ZERO DATA LOSS RULES:
 11. ONE-TO-ONE MAPPING: Each input item MUST produce exactly one output object. Do NOT skip, merge, or summarize. N items in → N items out.
 12. HANDLE MISSING DATA: Use null or "" for missing fields — never drop an item.
