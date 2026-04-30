@@ -606,7 +606,7 @@ async def classify_page(markdown: str, user_key: str) -> str:
 
 SEARCH_SYSTEM_PROMPT = """You are an AI research assistant analyzing web search results. You MUST extract a structured list of the top items, products, or articles mentioned in the text. For every item, extract its title, a short description, the price (if applicable), the image URL, and the link to the item. Do not just summarize the page; you must populate the results array."""
 
-def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-3.1-pro", strict_count: int = 0) -> str:
+def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", is_search: bool = False, model: str = "gemini-3.1-pro-preview", strict_count: int = 0) -> str:
     """
     Main extraction call — runs in a thread executor.
     Routes gemini-3.1-pro to raw HTTP v1 endpoint; all other models use the SDK.
@@ -634,9 +634,13 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
     else:
         prompt = f"{GEMINI_SYSTEM_PROMPT}{_UNIVERSAL_CAP}\n\nExtract ALL data from this web page markdown:\n\n{truncated}\n\n{constraint_prompt}"
 
-    # ── Route: gemini-3.1-pro → raw HTTP v1 endpoint ──
-    if model == "gemini-3.1-pro":
+    # ── Route: gemini-3.1-pro-preview → raw HTTP v1 endpoint ──
+    if model == "gemini-3.1-pro-preview":
         return _call_gemini_v1_pro_sync(prompt, user_key)
+
+    # ── Route: gemini-1.5-pro → also raw HTTP v1 (stable, non-SDK) ──
+    if model == "gemini-1.5-pro":
+        return _call_gemini_v1_http_sync(prompt, user_key, model)
 
     # ── Route: all other models → SDK ──
     return _call_gemini_sdk_sync(prompt, user_key, model, is_search)
@@ -644,10 +648,17 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
 
 def _call_gemini_v1_pro_sync(prompt: str, api_key: str) -> str:
     """
-    Raw HTTP call to Gemini 3.1 Pro via the v1 REST endpoint.
+    Raw HTTP call to Gemini 3.1 Pro Preview via the v1 REST endpoint.
     Does NOT use the genai SDK — avoids v1beta conflicts.
     """
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.1-pro:generateContent?key={api_key}"
+    return _call_gemini_v1_http_sync(prompt, api_key, "gemini-3.1-pro-preview")
+
+
+def _call_gemini_v1_http_sync(prompt: str, api_key: str, model: str = "gemini-3.1-pro-preview") -> str:
+    """
+    Generic raw HTTP call to any Gemini model via the v1 REST endpoint.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -656,13 +667,13 @@ def _call_gemini_v1_pro_sync(prompt: str, api_key: str) -> str:
         },
     }
 
-    logger.info("[gemini-3.1-pro] Sending request via raw HTTP v1 endpoint...")
+    logger.info(f"[{model}] Sending request via raw HTTP v1 endpoint...")
     response = httpx.post(url, json=payload, timeout=120.0)
 
     if response.status_code == 401 or response.status_code == 403:
         raise ValueError(f"Invalid or unauthorized Gemini API key (HTTP {response.status_code})")
     if response.status_code == 404:
-        raise ValueError(f"Model gemini-3.1-pro not found (HTTP 404). May require API key upgrade or region change.")
+        raise ValueError(f"Model {model} not found (HTTP 404). May require API key upgrade or region change.")
     if response.status_code == 429:
         raise ValueError(f"Gemini quota exceeded (HTTP 429). Try again later.")
     if response.status_code >= 500:
@@ -693,7 +704,7 @@ def _call_gemini_v1_pro_sync(prompt: str, api_key: str) -> str:
     if not raw or not raw.strip():
         raise ValueError("Gemini returned empty text response.")
 
-    logger.info(f"[gemini-3.1-pro] HTTP response OK — {len(raw)} chars received")
+    logger.info(f"[{model}] HTTP response OK — {len(raw)} chars received")
     return raw
 
 
@@ -791,14 +802,14 @@ async def structure_with_gemini(
     3-tier fallback: gemini-3.1-pro (HTTP v1) → gemini-3.1-flash (SDK) → gemini-3.1-flash-lite-preview (SDK).
     JSON parsing wrapped in try/except with partial-JSON recovery.
     """
-    max_retries = 4
+    max_retries = 5
     base_delay = 3
     last_error_msg: str | None = None
     raw_text: str = ""
     cleaned: str = ""
 
-    # 3-tier model fallback chain
-    _FALLBACK_CHAIN = ["gemini-3.1-pro", "gemini-3.1-flash", "gemini-3.1-flash-lite-preview"]
+    # 4-tier model fallback chain
+    _FALLBACK_CHAIN = ["gemini-3.1-pro-preview", "gemini-3.1-flash", "gemini-3.1-flash-lite-preview", "gemini-1.5-pro"]
     current_model = _FALLBACK_CHAIN[0]
     fallback_index = 0
 
