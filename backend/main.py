@@ -1228,9 +1228,18 @@ async def scrape_and_structure(payload: ScrapeRequest):
     structured, gemini_error = await structure_with_gemini(raw_markdown, payload.user_gemini_key, page_type)
 
     if structured is None:
-        logger.warning(f"Gemini unavailable ({gemini_error}) — using fallback parser")
-        structured = fallback_structure_from_markdown(raw_markdown, error_msg=gemini_error)
-        extraction_warning = "AI extraction unavailable — basic parsing used. Results may be incomplete."
+        gemini_err_lower = str(gemini_error).lower()
+        if "quota" in gemini_err_lower or "429" in gemini_err_lower:
+            logger.warning(f"Gemini API quota exceeded. Bypassing fallback parser to provide raw data only.")
+            structured = {
+                "page_summary": f"Extraction skipped due to Gemini API quota limits. Raw markdown is available below.",
+                "headings": [], "paragraphs": [], "media": [], "links": [], "external_links": [], "data_tables": []
+            }
+            extraction_warning = "Gemini API Quota Exceeded. Raw markdown data provided instead."
+        else:
+            logger.warning(f"Gemini unavailable ({gemini_error}) — using fallback parser")
+            structured = fallback_structure_from_markdown(raw_markdown, error_msg=gemini_error)
+            extraction_warning = "AI extraction unavailable — basic parsing used. Results may be incomplete."
     else:
         extraction_warning = None
 
