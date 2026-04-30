@@ -409,24 +409,32 @@ async def search_via_primary_scraper(query: str) -> list[dict]:
 # ──────────────────────────── Gemini System Prompt ─────────────────
 
 GEMINI_SYSTEM_PROMPT = """\
-You are an expert data extraction assistant. Analyze the provided Markdown content from a web page and extract structured information exhaustively.
+You are an expert data extraction assistant. Extract ALL meaningful data from the provided Markdown content — do NOT classify the page as only one type. A page can contain articles AND products AND tables AND code simultaneously.
 
-EXTRACTION STRATEGY — MANDATORY TWO-PHASE APPROACH:
+EXTRACTION STRATEGY — MANDATORY THREE-PHASE APPROACH:
 
-PHASE 1 — CHUNKING (internal, do NOT output this):
-Before extracting, mentally split the content into logical sections based on headings and topic changes.
-Each section = one chunk. Do NOT merge multiple sections. Do NOT split a section in the middle.
-For each chunk, identify: section_title, all headings, paragraphs, media, links, and repeating data patterns within it.
-Ignore navigation menus, ads, footers, and repeated site-wide links — focus only on main content blocks.
+PHASE 1 — SECTION CHUNKING (internal, do NOT output this):
+Split the content into logical sections based on headings and topic changes.
+Each section = one chunk. Do NOT merge sections. Do NOT split a section mid-content.
+For each chunk, identify: section_title, type of content it contains (article text, item listings, table data, code blocks).
+Ignore navigation menus, ads, footers, and repeated site-wide links.
 
-PHASE 2 — STRUCTURING (output this):
-Process EVERY chunk from Phase 1 and combine results into a single JSON object with EXACTLY these fields:
+PHASE 2 — MULTI-STRUCTURE EXTRACTION (internal, do NOT output this):
+Process EVERY chunk and extract ALL structure types found within it:
+a) ARTICLE CONTENT: headings, paragraphs — preserve ALL text, do NOT summarize or shorten.
+b) REPEATED ITEMS: products, listings, cards — each item extracted individually, never merged.
+c) TABLE DATA: headers and rows extracted completely, never truncated.
+d) CODE BLOCKS: preserved as-is in paragraphs with a [Code] prefix.
+e) LISTS: bullet/numbered lists preserved as individual paragraph items.
+
+PHASE 3 — STRUCTURING (output this):
+Combine ALL extracted data from EVERY chunk into a single JSON object with EXACTLY these fields:
 
 {
   "page_title": "The main title or name of the page (from H1 or the first heading)",
   "page_summary": "A concise 2-3 sentence summary of what the page is about.",
   "headings": ["Every heading found on the page (H1, H2, H3, H4) as plain text strings, in document order"],
-  "paragraphs": ["Every meaningful paragraph of body text, cleaned of markdown symbols. Each item is one paragraph."],
+  "paragraphs": ["Every meaningful paragraph of body text, cleaned of markdown symbols. Each item is one paragraph. Include list items and code blocks here too."],
   "media": [
     {"url": "full image/video URL", "type": "image or video", "alt": "alt text or description"}
   ],
@@ -445,31 +453,31 @@ Process EVERY chunk from Phase 1 and combine results into a single JSON object w
 
 CRITICAL INSTRUCTIONS — violate none:
 
-1. BE EXHAUSTIVE: Do not summarize lists. Extract EVERY single image, EVERY link, and EVERY row of data you can find. Never output "..." or "etc" to cut corners. If a page has 50 paragraphs, return all 50.
+1. EXTRACT EVERYTHING: Do NOT classify the page as only one type. A Wikipedia page has BOTH article text AND tables AND links. An e-commerce page has BOTH product listings AND review text AND specifications tables. Process ALL of them.
 
-2. DATA TABLES: Aggressively group repeating patterns (pricing, specs, feature lists, reviews, product grids, cast lists, FAQs, comparison tables) into the data_tables array. Use the section heading as the table title for context.
+2. BE EXHAUSTIVE: Do not summarize lists. Extract EVERY image, EVERY link, EVERY row, EVERY paragraph. Never output "..." or "etc". If a page has 50 paragraphs, return all 50.
 
-3. CLEAN MARKDOWN LINKS: Never output raw markdown like [Text](URL). For the links array, extract the visible text as "text" and the URL as "url". Example: [Leonardo DiCaprio](https://...) → {"text": "Leonardo DiCaprio", "url": "https://..."}.
+3. DATA TABLES: Aggressively group repeating patterns (pricing, specs, feature lists, reviews, product grids, cast lists, FAQs, comparison tables) into data_tables. Use the section heading as the table title for context.
 
-4. ALL row cell values MUST be plain text strings. Never put objects, arrays, or nulls inside a row cell. If a cell is empty, use an empty string "".
+4. ALL row cell values MUST be plain text strings. Never put objects, arrays, or nulls inside a row cell. If a cell is empty, use "".
 
-5. HEADINGS: Include every H1–H4 as a plain text string. Strip all # symbols.
+5. HEADINGS: Include every H1–H4 as plain text. Strip all # symbols.
 
-6. PARAGRAPHS: Strip all markdown symbols (**, *, _, #, >, -) from paragraph text. Return clean readable sentences.
+6. PARAGRAPHS: Strip markdown symbols (**, *, _, #, >, -). Return clean readable sentences. Include list items and code block content.
 
-7. MEDIA: Find every image using ![alt](url) syntax AND any raw image URLs (.jpg, .png, .gif, .webp, .svg). Find video embeds too.
+7. MEDIA: Find every image (![alt](url) syntax AND raw image URLs). Find video embeds too.
 
-8. NO MARKDOWN IN OUTPUT: All string values must be plain text — no **, *, _, #, >, or backtick characters inside values.
+8. NO MARKDOWN IN OUTPUT: All string values must be plain text.
 
-9. Output ONLY raw, parseable JSON. Do not wrap it in ```json fences or any markdown block. No commentary, no explanation.
+9. Output ONLY raw, parseable JSON. No ```json fences. No commentary.
 
 10. If a field has no data, return an empty array [].
 
 ZERO DATA LOSS RULES:
-11. ONE-TO-ONE MAPPING: Each input item MUST produce exactly one output object. Do NOT skip, merge, or summarize items. If the page has N products/listings/cards/rows, your output MUST contain exactly N entries in data_tables rows.
-12. HANDLE MISSING DATA: Use null or empty string "" for missing fields — never drop an item because some fields are absent.
+11. ONE-TO-ONE MAPPING: Each input item MUST produce exactly one output object. Do NOT skip, merge, or summarize. N items in → N items out.
+12. HANDLE MISSING DATA: Use null or "" for missing fields — never drop an item.
 13. CONSISTENCY: All objects in an array must have identical keys.
-14. SECTION COMPLETENESS: Every section identified in Phase 1 MUST have its content represented in the output. No section may be skipped or compressed. Verify all sections are covered before finishing.\
+14. SECTION COMPLETENESS: Every section from Phase 1 MUST be represented. No section skipped or compressed.\
 """
 
 # Extra instruction injected for DIRECTORY pages to prevent JSON truncation
@@ -602,7 +610,7 @@ def _call_gemini_sync(markdown: str, user_key: str, page_type: str = "GENERAL", 
     after_len = len(truncated)
     logger.info(f"[{page_type}] Cleaned {before_len} → {after_len} chars before sending to Gemini ({model})")
 
-    constraint_prompt = "ZERO LOSS MANDATE: Every distinct item, product, listing, or row on the page MUST map to exactly one output entry — do NOT skip, merge, or summarize. Use null for missing fields instead of dropping items. Return a maximum of 20 items per array. Be concise with field values. Do not include raw HTML in any field. Keep all string values under 200 characters. Your entire response must be valid complete JSON — never truncate mid-response."
+    constraint_prompt = "ZERO LOSS MANDATE: Extract ALL structure types — articles, items, tables, code blocks — do NOT classify the page as only one type. Every distinct item, product, listing, or row MUST map to exactly one output entry. Preserve ALL paragraphs and list items without summarizing. Use null for missing fields instead of dropping items. Return a maximum of 20 items per data_table array. Be concise with field values. Do not include raw HTML. Keep string values under 200 characters. Your entire response must be valid complete JSON — never truncate."
 
     # Strict count enforcement: inject exact expected count into prompt
     if strict_count > 0:
